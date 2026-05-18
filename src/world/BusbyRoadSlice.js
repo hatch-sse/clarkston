@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 
-function makeLabel(text, bg) {
+function makeLabel(text, bg, fg = '#ffffff') {
   const c = document.createElement('canvas');
-  c.width = 512;
-  c.height = 128;
+  c.width = 768;
+  c.height = 192;
   const ctx = c.getContext('2d');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, c.width, c.height);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 52px system-ui, sans-serif';
+  ctx.fillStyle = fg;
+  ctx.font = 'bold 68px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, c.width / 2, c.height / 2);
@@ -39,7 +39,9 @@ export class BusbyRoadSlice {
       pavement: new THREE.MeshStandardMaterial({ color: 0xb9b5aa, roughness: 0.9 }),
       kerb: new THREE.MeshStandardMaterial({ color: 0x8f8b83, roughness: 0.85 }),
       sandstone: new THREE.MeshStandardMaterial({ color: 0xa89270, roughness: 0.95 }),
+      redSandstone: new THREE.MeshStandardMaterial({ color: 0x8f6a55, roughness: 0.95 }),
       brick: new THREE.MeshStandardMaterial({ color: 0x8b6049, roughness: 0.95 }),
+      render: new THREE.MeshStandardMaterial({ color: 0xc9c0ad, roughness: 0.94 }),
       slate: new THREE.MeshStandardMaterial({ color: 0x30363a, roughness: 0.9 }),
       glass: new THREE.MeshPhysicalMaterial({ color: 0x14283a, roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.7 }),
       hedge: new THREE.MeshStandardMaterial({ color: 0x2f7138, roughness: 1 }),
@@ -71,7 +73,9 @@ export class BusbyRoadSlice {
     this.addDetails();
     this.addParkedCars();
     this.addTrees();
+    this.addClarkstonSigns();
     this.addGiveWayAndJunction();
+    this.addTrafficLightsAndCrossings();
     return { roadCount: 1, buildingCount: this.buildings.length };
   }
 
@@ -92,45 +96,76 @@ export class BusbyRoadSlice {
     for (const x of [-8.8, 8.8]) addBox(this.scene, x, 0.19, 0, 0.25, 0.03, 700, this.mat.yellow).rotation.x = 0.035;
     for (let z = -320; z < 320; z += 34) addBox(this.scene, 0, 0.2, z, 0.38, 0.03, 13, this.mat.white).rotation.x = 0.035;
 
-    // Subtle wet patches/reflections on the carriageway.
+    // Side-road mouths to make it feel more like Clarkston town centre rather than one straight test road.
+    for (const z of [-190, -28, 138]) {
+      addBox(this.scene, -38, 0.08, z, 55, 0.07, 13, this.mat.road).rotation.x = 0.035;
+      addBox(this.scene, 38, 0.08, z + 22, 55, 0.07, 13, this.mat.road).rotation.x = 0.035;
+    }
+
+    // Wet patches/reflections.
     for (let z = -300; z < 320; z += 42) {
       const patch = addBox(this.scene, (Math.random() - 0.5) * 7, 0.225, z, 5 + Math.random() * 5, 0.01, 7 + Math.random() * 8, this.mat.black);
       patch.material = new THREE.MeshPhysicalMaterial({ color: 0x0d1114, roughness: 0.08, metalness: 0.02, clearcoat: 1, transparent: true, opacity: 0.35 });
     }
   }
 
-  addShop(x, z, w, name, colour) {
-    const b = addBox(this.scene, x, 0, z, w, 11, 15, this.mat.sandstone);
+  addShop(x, z, w, name, colour, material = this.mat.sandstone) {
+    const b = addBox(this.scene, x, 0, z, w, 11, 15, material);
     this.addCollider(b);
     this.buildings.push(b);
     addBox(this.scene, x, 11, z, w + 1, 2, 16, this.mat.slate);
 
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(w - 1, 16), 3), new THREE.MeshBasicMaterial({ map: makeLabel(name, colour) }));
-    sign.position.set(x, 5.8, z - Math.sign(z || 1) * 7.7);
-    sign.rotation.y = z < 0 ? Math.PI : 0;
+    const facing = x < 0 ? 1 : -1;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(w - 1, 18), 3), new THREE.MeshBasicMaterial({ map: makeLabel(name, colour) }));
+    sign.position.set(x + facing * 0.05, 5.8, z);
+    sign.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
     this.scene.add(sign);
 
-    for (let i = -1; i <= 1; i++) addBox(this.scene, x + i * 4, 2.4, z - Math.sign(z || 1) * 7.8, 2.5, 3.2, 0.25, this.mat.glass);
+    for (let i = -1; i <= 1; i++) addBox(this.scene, x + facing * 7.7, 2.4, z + i * 4, 0.25, 3.2, 2.5, this.mat.glass);
+    addBox(this.scene, x + facing * 7.95, 0.25, z, 0.2, 4.2, 2.2, this.mat.black);
+    addBox(this.scene, x + facing * 8.15, 4.9, z, 1.1, 0.35, w - 2, this.mat.slate);
+  }
 
-    // Doors, awnings and small shop depth.
-    addBox(this.scene, x, 0.25, z - Math.sign(z || 1) * 7.95, 2.2, 4.2, 0.2, this.mat.black);
-    addBox(this.scene, x, 4.9, z - Math.sign(z || 1) * 8.15, w - 2, 0.35, 1.1, this.mat.slate);
+  addTenementRow(x, z, w, name, colour) {
+    this.addShop(x, z, w, name, colour, this.mat.redSandstone);
+    const facing = x < 0 ? 1 : -1;
+    for (let floor = 0; floor < 2; floor++) {
+      for (let i = -2; i <= 2; i++) {
+        addBox(this.scene, x + facing * 7.9, 7.2 + floor * 3.2, z + i * 3.6, 0.22, 2.0, 1.6, this.mat.glass);
+      }
+    }
   }
 
   addHighStreet() {
     const left = -29;
     const right = 29;
-    const names = ['CAFE', 'PHARMACY', 'BAKERY', 'NEWS', 'OPTICIAN', 'BARBER'];
-    const colours = ['#5b3415', '#1f5e8c', '#7c2d12', '#7f1d1d', '#1e3a8a', '#111111'];
-    for (let i = 0; i < names.length; i++) {
-      this.addShop(left, -120 + i * 34, 18 + (i % 2) * 4, names[i], colours[i]);
-      this.addShop(right, -118 + i * 34, 18 + ((i + 1) % 2) * 4, names[(i + 2) % names.length], colours[(i + 2) % colours.length]);
+    const leftShops = [
+      ['MORRISONS', '#006b3f'],
+      ['MILANO\'S', '#7c2d12'],
+      ['PHARMACY', '#1f5e8c'],
+      ['BAKERY', '#7c2d12'],
+      ['BARBER', '#111111'],
+      ['CAFE', '#5b3415']
+    ];
+    const rightShops = [
+      ['GREGGS', '#0b4ea2'],
+      ['FRATELLI', '#111827'],
+      ['OPTICIAN', '#1e3a8a'],
+      ['NEWS', '#7f1d1d'],
+      ['DENTIST', '#4b5563'],
+      ['BANK', '#334155']
+    ];
+
+    for (let i = 0; i < leftShops.length; i++) {
+      const z = -126 + i * 34;
+      this.addTenementRow(left, z, 18 + (i % 2) * 4, leftShops[i][0], leftShops[i][1]);
+      this.addTenementRow(right, z + 4, 18 + ((i + 1) % 2) * 4, rightShops[i][0], rightShops[i][1]);
     }
   }
 
   addResidentialRows() {
     for (const side of [-1, 1]) {
-      const x = side * 32;
+      const x = side * 34;
       for (let z = 120; z < 330; z += 26) {
         const house = addBox(this.scene, x, 0, z, 14, 9.5, 15, this.mat.brick);
         this.addCollider(house);
@@ -196,6 +231,46 @@ export class BusbyRoadSlice {
         leaves.castShadow = true;
         this.scene.add(leaves);
       }
+    }
+  }
+
+  addRoadSign(text, x, z, rotation = 0, bg = '#ffffff', fg = '#111111') {
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(8, 3), new THREE.MeshBasicMaterial({ map: makeLabel(text, bg, fg) }));
+    sign.position.set(x, 4.2, z);
+    sign.rotation.y = rotation;
+    this.scene.add(sign);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 4, 8), this.mat.black);
+    pole.position.set(x, 2, z);
+    this.scene.add(pole);
+  }
+
+  addClarkstonSigns() {
+    this.addRoadSign('A727  Busby Road', -8, -292, 0, '#ffffff', '#111111');
+    this.addRoadSign('Clarkston Toll', 8, -225, Math.PI, '#ffffff', '#111111');
+    this.addRoadSign('Sheddens  B767', -14, 88, Math.PI / 2, '#006b3f', '#ffffff');
+    this.addRoadSign('Station', 14, 150, -Math.PI / 2, '#006b3f', '#ffffff');
+  }
+
+  addTrafficLightsAndCrossings() {
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0x00ff66 });
+    const redMat = new THREE.MeshBasicMaterial({ color: 0x441111 });
+    for (const x of [-9, 9]) {
+      for (const z of [-32, 46]) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 5.5, 8), this.mat.black);
+        pole.position.set(x, 2.75, z);
+        this.scene.add(pole);
+        const box = addBox(this.scene, x, 4.9, z, 0.8, 1.6, 0.55, this.mat.black);
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8), lightMat);
+        lamp.position.set(x, 5.35, z - 0.31);
+        this.scene.add(lamp);
+        const red = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 8), redMat);
+        red.position.set(x, 4.82, z - 0.31);
+        this.scene.add(red);
+      }
+    }
+
+    for (let x = -7; x <= 7; x += 2.2) {
+      addBox(this.scene, x, 0.24, 38, 1.2, 0.03, 4.8, this.mat.white);
     }
   }
 
