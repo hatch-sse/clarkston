@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clarkston Engine Build</title>
+  <link rel="stylesheet" href="styles.css?v=engine-1" />
+  <style>
+    #version-banner {
+      position: fixed;
+      left: 50%;
+      top: 20px;
+      transform: translateX(-50%);
+      z-index: 9999;
+      padding: 12px 20px;
+      border-radius: 999px;
+      background: #ffcc00;
+      color: #111;
+      font-weight: 900;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+  </style>
+</head>
+<body>
+  <div id="version-banner">ENGINE BUILD v1 — if you see this, the new build loaded</div>
+
+  <div id="hud">
+    <h1>Clarkston Engine Build</h1>
+    <p id="status">Booting mini open-world engine…</p>
+    <div class="controls"><strong>Controls</strong><br>WASD / arrows: drive<br>Shift: boost</div>
+    <div class="credit">Standalone engine test page</div>
+  </div>
+
+  <div id="dash">
+    <div><b>Mode</b> <span id="mode">Driving</span></div>
+    <div><b>Speed</b> <span id="speed">0</span> mph</div>
+    <div><b>Area</b> <span id="area">Engine Test</span></div>
+    <div class="mission">This page bypasses the old app-realistic.js build.</div>
+  </div>
+
+  <canvas id="minimap" width="220" height="220"></canvas>
+  <canvas id="game"></canvas>
+
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.165.0/build/three.module.js"}}</script>
+  <script type="module" src="src/main.js?v=engine-1"></script>
+</body>
+</html>
