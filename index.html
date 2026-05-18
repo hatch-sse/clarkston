@@ -3,20 +3,39 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clarkston Simulator</title>
-  <link rel="stylesheet" href="styles.css?v=7" />
+  <title>Clarkston Mini Open World</title>
+  <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
   <div id="hud">
-    <h1>Clarkston Simulator</h1>
-    <p id="status">Loading real Clarkston map…</p>
-    <div class="controls"><strong>Controls</strong><br>WASD / arrows: move or drive<br>Shift: run / boost<br>E: enter / exit car<br>R: reset</div>
-    <div class="credit">Map data © OpenStreetMap contributors</div>
+    <h1>Clarkston Mini Open World</h1>
+    <p id="status">Booting mini engine…</p>
+    <div class="controls">
+      <strong>Controls</strong><br>
+      WASD / arrows: drive<br>
+      Shift: boost<br>
+    </div>
+    <div class="credit">Prototype open-world engine</div>
   </div>
-  <div id="dash"><div><b>Mode</b> <span id="mode">Walking</span></div><div><b>Speed</b> <span id="speed">0</span> mph</div><div><b>Area</b> <span id="area">Clarkston</span></div><div class="mission">Mission: press <b>E</b> near the red car and drive without hitting buildings.</div></div>
+
+  <div id="dash">
+    <div><b>Mode</b> <span id="mode">Driving</span></div>
+    <div><b>Speed</b> <span id="speed">0</span> mph</div>
+    <div><b>Area</b> <span id="area">Clarkston Prototype</span></div>
+    <div class="mission">Mini engine prototype with modular systems enabled.</div>
+  </div>
+
   <canvas id="minimap" width="220" height="220"></canvas>
   <canvas id="game"></canvas>
-  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.165.0/build/three.module.js"}}</script>
-  <script type="module" src="app-realistic.js?v=7"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module" src="src/main.js?v=8"></script>
 </body>
 </html>
