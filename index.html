@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clarkston Simulator - Web Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="hud">
+    <h1>Clarkston Simulator</h1>
+    <p id="status">Loading Clarkston map data…</p>
+    <div class="controls">
+      <strong>Controls</strong><br />
+      WASD / arrows: move or drive<br />
+      Shift: run / boost<br />
+      E: enter / exit car<br />
+      R: reset position<br />
+      Mouse: look around
+    </div>
+    <div class="credit">Map data © OpenStreetMap contributors</div>
+  </div>
+  <canvas id="game"></canvas>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
+    }
+  }
+  </script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
