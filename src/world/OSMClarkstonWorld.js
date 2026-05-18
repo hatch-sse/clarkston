@@ -12,8 +12,8 @@ export class OSMClarkstonWorld {
     this.roadClearanceSegments = [];
 
     this.materials = {
-      road: new THREE.MeshStandardMaterial({ color: 0x30343a, roughness: 0.95 }),
-      mainRoad: new THREE.MeshStandardMaterial({ color: 0x24282d, roughness: 0.94 }),
+      road: new THREE.MeshStandardMaterial({ color: 0x262b30, roughness: 0.82, metalness: 0.04 }),
+      mainRoad: new THREE.MeshStandardMaterial({ color: 0x20252a, roughness: 0.78, metalness: 0.05 }),
       pavement: new THREE.MeshStandardMaterial({ color: 0xb8b4aa, roughness: 1 }),
       building: new THREE.MeshStandardMaterial({ color: 0xb8ad98, roughness: 0.95 }),
       shop: new THREE.MeshStandardMaterial({ color: 0xd1bea0, roughness: 0.9 }),
@@ -21,6 +21,11 @@ export class OSMClarkstonWorld {
       white: new THREE.MeshBasicMaterial({ color: 0xf1ead8 }),
       yellow: new THREE.MeshBasicMaterial({ color: 0xd7bc38 })
     };
+  }
+
+  getHeight(x, z) {
+    // Approximate Clarkston's hilly terrain while we do not yet have DEM tile streaming.
+    return (z * -0.032) + (x * 0.006) + Math.sin(x * 0.006) * 2.2 + Math.cos(z * 0.004) * 1.6;
   }
 
   async load() {
@@ -76,12 +81,12 @@ export class OSMClarkstonWorld {
     return { roadCount, buildingCount };
   }
 
-  addSegment(a, b, width, height, material, y) {
+  addSegment(a, b, width, height, material, yOffset = 0.05) {
     const length = a.distanceTo(b);
     if (length < 0.5) return;
     const mid = new THREE.Vector2().addVectors(a, b).multiplyScalar(0.5);
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, length), material);
-    mesh.position.set(mid.x, y, mid.y);
+    mesh.position.set(mid.x, this.getHeight(mid.x, mid.y) + yOffset, mid.y);
     mesh.rotation.y = Math.atan2(b.x - a.x, b.y - a.y);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
@@ -97,13 +102,13 @@ export class OSMClarkstonWorld {
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
-      if (!foot) this.roadClearanceSegments.push({ a, b, clearance: width / 2 + 5.5 });
+      if (!foot) this.roadClearanceSegments.push({ a, b, clearance: width / 2 + 18 });
 
       if (foot) {
-        this.addSegment(a, b, width, 0.05, this.materials.pavement, 0.12);
+        this.addSegment(a, b, width, 0.05, this.materials.pavement, 0.16);
       } else {
-        this.addSegment(a, b, width + 5.4, 0.035, this.materials.pavement, 0.04);
-        this.addSegment(a, b, width, 0.08, main ? this.materials.mainRoad : this.materials.road, 0.09);
+        this.addSegment(a, b, width + 7.8, 0.035, this.materials.pavement, 0.06);
+        this.addSegment(a, b, width, 0.08, main ? this.materials.mainRoad : this.materials.road, 0.12);
         this.addRoadMarkings(a, b, width, main);
       }
     }
@@ -117,13 +122,13 @@ export class OSMClarkstonWorld {
     for (let d = 8; d < length - 8; d += 24) {
       const p1 = a.clone().addScaledVector(dir, d);
       const p2 = a.clone().addScaledVector(dir, Math.min(d + 10, length));
-      this.addSegment(p1, p2, 0.38, 0.025, this.materials.white, 0.15);
+      this.addSegment(p1, p2, 0.38, 0.025, this.materials.white, 0.18);
     }
   }
 
   addRail(points) {
     for (let i = 0; i < points.length - 1; i++) {
-      this.addSegment(points[i], points[i + 1], 3.2, 0.08, this.materials.road, 0.1);
+      this.addSegment(points[i], points[i + 1], 3.2, 0.08, this.materials.road, 0.14);
     }
   }
 
@@ -145,7 +150,7 @@ export class OSMClarkstonWorld {
     return new THREE.Vector2(x / points.length, y / points.length);
   }
 
-  shrinkFootprint(points, factor = 0.78) {
+  shrinkFootprint(points, factor = 0.7) {
     const c = this.centroid(points);
     return points.map(p => new THREE.Vector2(c.x + (p.x - c.x) * factor, c.y + (p.y - c.y) * factor));
   }
@@ -159,12 +164,22 @@ export class OSMClarkstonWorld {
     return p.distanceTo(closest);
   }
 
+  segmentsIntersect(a, b, c, d) {
+    const cross = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    return (cross(a, b, c) * cross(a, b, d) < 0) && (cross(c, d, a) * cross(c, d, b) < 0);
+  }
+
   tooCloseToRoad(points) {
     const c = this.centroid(points);
-    const samples = [c, ...points.slice(0, Math.min(points.length, 8))];
+    const samples = [c, ...points];
     for (const road of this.roadClearanceSegments) {
       for (const p of samples) {
         if (this.distancePointToSegment(p, road.a, road.b) < road.clearance) return true;
+      }
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        if (this.segmentsIntersect(a, b, road.a, road.b)) return true;
       }
     }
     return false;
@@ -172,7 +187,7 @@ export class OSMClarkstonWorld {
 
   addBuilding(points, tags) {
     if (points.length < 3) return false;
-    const footprint = this.shrinkFootprint(points, tags.shop ? 0.86 : 0.74);
+    const footprint = this.shrinkFootprint(points, tags.shop ? 0.78 : 0.62);
     if (this.tooCloseToRoad(footprint)) return false;
 
     const height = Number(tags.height) || Number(tags['building:levels']) * 2.8 || (tags.shop ? 5.5 : 4.8 + Math.random() * 5.8);
@@ -180,12 +195,14 @@ export class OSMClarkstonWorld {
     geometry.rotateX(-Math.PI / 2);
 
     const mesh = new THREE.Mesh(geometry, tags.shop ? this.materials.shop : this.materials.building);
+    const c = this.centroid(footprint);
+    mesh.position.y = this.getHeight(c.x, c.y);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     mesh.updateMatrixWorld(true);
 
-    const box = new THREE.Box3().setFromObject(mesh).expandByScalar(0.4);
+    const box = new THREE.Box3().setFromObject(mesh).expandByScalar(0.35);
     this.colliders.push(box);
     this.buildings.push(footprint);
     return true;
@@ -193,8 +210,8 @@ export class OSMClarkstonWorld {
 
   collides(position, radius = 3) {
     const box = new THREE.Box3(
-      new THREE.Vector3(position.x - radius, 0, position.z - radius),
-      new THREE.Vector3(position.x + radius, 8, position.z + radius)
+      new THREE.Vector3(position.x - radius, position.y - 1, position.z - radius),
+      new THREE.Vector3(position.x + radius, position.y + 5, position.z + radius)
     );
     return this.colliders.some(collider => collider.intersectsBox(box));
   }
