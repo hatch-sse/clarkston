@@ -9,6 +9,7 @@ export class OSMClarkstonWorld {
     this.roads = [];
     this.buildings = [];
     this.colliders = [];
+    this.roadClearanceSegments = [];
 
     this.materials = {
       road: new THREE.MeshStandardMaterial({ color: 0x30343a, roughness: 0.95 }),
@@ -24,22 +25,14 @@ export class OSMClarkstonWorld {
 
   async load() {
     const query = `[out:json][timeout:25];(way["highway"](${BOUNDS});way["building"](${BOUNDS});way["railway"](${BOUNDS}););out body;>;out skel qt;`;
-    const endpoints = [
-      'https://overpass-api.de/api/interpreter',
-      'https://overpass.kumi.systems/api/interpreter'
-    ];
-
+    const endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
     let data = null;
 
     for (const endpoint of endpoints) {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 14000);
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          body: query,
-          signal: controller.signal
-        });
+        const response = await fetch(endpoint, { method: 'POST', body: query, signal: controller.signal });
         clearTimeout(timeout);
         if (!response.ok) throw new Error('OSM endpoint failed');
         data = await response.json();
@@ -59,30 +52,25 @@ export class OSMClarkstonWorld {
       }
     }
 
+    const buildingQueue = [];
     let roadCount = 0;
     let buildingCount = 0;
 
     for (const item of data.elements) {
       if (item.type !== 'way' || !item.nodes) continue;
-
       const points = item.nodes.map(id => nodes.get(id)).filter(Boolean);
       if (points.length < 2) continue;
-
       const tags = item.tags || {};
-
       if (tags.highway) {
         this.addRoad(points, tags);
         roadCount++;
       }
+      if (tags.railway) this.addRail(points);
+      if (tags.building) buildingQueue.push({ points, tags });
+    }
 
-      if (tags.railway) {
-        this.addRail(points);
-      }
-
-      if (tags.building) {
-        this.addBuilding(points, tags);
-        buildingCount++;
-      }
+    for (const item of buildingQueue) {
+      if (this.addBuilding(item.points, item.tags)) buildingCount++;
     }
 
     return { roadCount, buildingCount };
@@ -91,10 +79,8 @@ export class OSMClarkstonWorld {
   addSegment(a, b, width, height, material, y) {
     const length = a.distanceTo(b);
     if (length < 0.5) return;
-
     const mid = new THREE.Vector2().addVectors(a, b).multiplyScalar(0.5);
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, length), material);
-
     mesh.position.set(mid.x, y, mid.y);
     mesh.rotation.y = Math.atan2(b.x - a.x, b.y - a.y);
     mesh.receiveShadow = true;
@@ -106,12 +92,12 @@ export class OSMClarkstonWorld {
     const main = ['primary', 'secondary', 'tertiary', 'trunk'].includes(highway);
     const foot = ['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway);
     const width = main ? 11.5 : foot ? 2.2 : 6.8;
-
-    this.roads.push({ points, main, foot, name: tags.name || '' });
+    this.roads.push({ points, main, foot, width, name: tags.name || '' });
 
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
+      if (!foot) this.roadClearanceSegments.push({ a, b, clearance: width / 2 + 5.5 });
 
       if (foot) {
         this.addSegment(a, b, width, 0.05, this.materials.pavement, 0.12);
@@ -125,12 +111,9 @@ export class OSMClarkstonWorld {
 
   addRoadMarkings(a, b, width, main) {
     if (!main) return;
-
     const length = a.distanceTo(b);
     if (length < 20) return;
-
     const dir = new THREE.Vector2().subVectors(b, a).normalize();
-
     for (let d = 8; d < length - 8; d += 24) {
       const p1 = a.clone().addScaledVector(dir, d);
       const p2 = a.clone().addScaledVector(dir, Math.min(d + 10, length));
@@ -152,26 +135,60 @@ export class OSMClarkstonWorld {
     return shape;
   }
 
+  centroid(points) {
+    let x = 0;
+    let y = 0;
+    for (const p of points) {
+      x += p.x;
+      y += p.y;
+    }
+    return new THREE.Vector2(x / points.length, y / points.length);
+  }
+
+  shrinkFootprint(points, factor = 0.78) {
+    const c = this.centroid(points);
+    return points.map(p => new THREE.Vector2(c.x + (p.x - c.x) * factor, c.y + (p.y - c.y) * factor));
+  }
+
+  distancePointToSegment(p, a, b) {
+    const ab = new THREE.Vector2().subVectors(b, a);
+    const denom = ab.lengthSq();
+    if (denom === 0) return p.distanceTo(a);
+    const t = Math.max(0, Math.min(1, new THREE.Vector2().subVectors(p, a).dot(ab) / denom));
+    const closest = a.clone().addScaledVector(ab, t);
+    return p.distanceTo(closest);
+  }
+
+  tooCloseToRoad(points) {
+    const c = this.centroid(points);
+    const samples = [c, ...points.slice(0, Math.min(points.length, 8))];
+    for (const road of this.roadClearanceSegments) {
+      for (const p of samples) {
+        if (this.distancePointToSegment(p, road.a, road.b) < road.clearance) return true;
+      }
+    }
+    return false;
+  }
+
   addBuilding(points, tags) {
-    if (points.length < 3) return;
+    if (points.length < 3) return false;
+    const footprint = this.shrinkFootprint(points, tags.shop ? 0.86 : 0.74);
+    if (this.tooCloseToRoad(footprint)) return false;
 
-    const height = Number(tags.height) || Number(tags['building:levels']) * 3.1 || (tags.shop ? 7 : 7 + Math.random() * 7);
-    const geometry = new THREE.ExtrudeGeometry(this.makeShape(points), {
-      depth: height,
-      bevelEnabled: false
-    });
-
+    const height = Number(tags.height) || Number(tags['building:levels']) * 2.8 || (tags.shop ? 5.5 : 4.8 + Math.random() * 5.8);
+    const geometry = new THREE.ExtrudeGeometry(this.makeShape(footprint), { depth: height, bevelEnabled: false });
     geometry.rotateX(-Math.PI / 2);
 
     const mesh = new THREE.Mesh(geometry, tags.shop ? this.materials.shop : this.materials.building);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
-
     mesh.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(mesh).expandByScalar(0.8);
+
+    const box = new THREE.Box3().setFromObject(mesh).expandByScalar(0.4);
     this.colliders.push(box);
-    this.buildings.push(points);
+    this.buildings.push(footprint);
+    return true;
   }
 
   collides(position, radius = 3) {
@@ -179,7 +196,6 @@ export class OSMClarkstonWorld {
       new THREE.Vector3(position.x - radius, 0, position.z - radius),
       new THREE.Vector3(position.x + radius, 8, position.z + radius)
     );
-
     return this.colliders.some(collider => collider.intersectsBox(box));
   }
 }
