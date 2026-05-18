@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { Input } from './core/Input.js';
-import { createPorsche911 } from './vehicles/Porsche911.js';
 import { VehicleController } from './vehicles/VehicleController.js';
 import { ChaseCamera } from './camera/ChaseCamera.js';
 import { BusbyRoadSlice } from './world/BusbyRoadSlice.js';
 import { applyRendererFX, addAtmosphere } from './rendering/RendererFX.js';
+import { createRealisticVehicle } from './vehicles/VehicleAssetLoader.js';
 
 const canvas = document.querySelector('#game');
 const renderer = new THREE.WebGLRenderer({
@@ -58,17 +58,26 @@ world.load().then(({ buildingCount }) => {
   statusEl.textContent = `BUSBY ROAD BUILD: ${buildingCount} detailed buildings loaded`;
 });
 
-const car = createPorsche911();
-car.position.set(0, 0.1, -250);
-scene.add(car);
-
 const input = new Input();
-const vehicle = new VehicleController(car, input);
-const chaseCamera = new ChaseCamera(camera, car);
 const clock = new THREE.Clock();
 
+let car;
+let vehicle;
+let chaseCamera;
+
+createRealisticVehicle().then(vehicleMesh => {
+  car = vehicleMesh;
+  car.position.set(0, 0.1, -250);
+  scene.add(car);
+
+  vehicle = new VehicleController(car, input);
+  chaseCamera = new ChaseCamera(camera, car);
+
+  statusEl.textContent = 'High-detail sports car loaded';
+});
+
 function drawMiniMap() {
-  if (!miniCtx) return;
+  if (!miniCtx || !car) return;
 
   const size = mini.width;
   miniCtx.clearRect(0, 0, size, size);
@@ -109,19 +118,22 @@ function animate() {
 
   const delta = Math.min(clock.getDelta(), 0.033);
 
-  const previousPosition = car.position.clone();
-  vehicle.update(delta);
+  if (car && vehicle && chaseCamera) {
+    const previousPosition = car.position.clone();
 
-  car.position.y = world.getHeight(car.position.x, car.position.z) + 0.1;
+    vehicle.update(delta);
 
-  if (world.collides(car.position, 3.2)) {
-    car.position.copy(previousPosition);
-    vehicle.speed *= -0.25;
+    car.position.y = world.getHeight(car.position.x, car.position.z) + 0.1;
+
+    if (world.collides(car.position, 3.2)) {
+      car.position.copy(previousPosition);
+      vehicle.speed *= -0.25;
+    }
+
+    chaseCamera.update(delta);
+
+    speedEl.textContent = Math.round(Math.abs(vehicle.speed) * 1.2);
   }
-
-  chaseCamera.update(delta);
-
-  speedEl.textContent = Math.round(Math.abs(vehicle.speed) * 1.2);
 
   drawMiniMap();
   renderer.render(scene, camera);
