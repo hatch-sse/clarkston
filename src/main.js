@@ -3,33 +3,33 @@ import { Input } from './core/Input.js';
 import { createPorsche911 } from './vehicles/Porsche911.js';
 import { VehicleController } from './vehicles/VehicleController.js';
 import { ChaseCamera } from './camera/ChaseCamera.js';
-import { OSMClarkstonWorld } from './world/OSMClarkstonWorld.js';
+import { BusbyRoadSlice } from './world/BusbyRoadSlice.js';
 
 const canvas = document.querySelector('#game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xb9d2e6);
-scene.fog = new THREE.Fog(0xb9d2e6, 500, 1800);
+scene.fog = new THREE.Fog(0xb9d2e6, 280, 850);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 4000);
-scene.add(new THREE.HemisphereLight(0xe8f7ff, 0x52614d, 1.7));
+const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 4000);
 
-const sun = new THREE.DirectionalLight(0xffffff, 2.2);
-sun.position.set(180, 260, 120);
+scene.add(new THREE.HemisphereLight(0xe8f7ff, 0x52614d, 1.55));
+
+const sun = new THREE.DirectionalLight(0xfff2d0, 2.7);
+sun.position.set(-120, 260, 160);
 sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -260;
+sun.shadow.camera.right = 260;
+sun.shadow.camera.top = 420;
+sun.shadow.camera.bottom = -420;
 scene.add(sun);
-
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(2200, 2200),
-  new THREE.MeshStandardMaterial({ color: 0x6c9961 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
 
 const speedEl = document.querySelector('#speed');
 const modeEl = document.querySelector('#mode');
@@ -39,21 +39,17 @@ const mini = document.querySelector('#minimap');
 const miniCtx = mini?.getContext('2d');
 
 modeEl.textContent = 'Driving';
-areaEl.textContent = 'Clarkston OSM';
-statusEl.textContent = 'Loading real Clarkston OpenStreetMap data...';
+areaEl.textContent = 'Busby Road';
+statusEl.textContent = 'Loading hand-built Busby Road high street...';
 
-const world = new OSMClarkstonWorld(scene);
-world.load()
-  .then(({ roadCount, buildingCount }) => {
-    statusEl.textContent = `OSM ENGINE BUILD: ${roadCount} roads and ${buildingCount} buildings loaded`;
-  })
-  .catch(error => {
-    console.error(error);
-    statusEl.textContent = 'OSM failed to load. Refresh in a minute.';
-  });
+const world = new BusbyRoadSlice(scene);
+world.load().then(({ buildingCount }) => {
+  statusEl.textContent = `BUSBY ROAD BUILD: high street slice loaded with ${buildingCount} buildings`;
+});
 
 const car = createPorsche911();
-car.position.set(0, 0, 0);
+car.position.set(0, 0.1, -250);
+car.rotation.y = 0;
 scene.add(car);
 
 const input = new Input();
@@ -69,34 +65,24 @@ function drawMiniMap() {
   miniCtx.fillRect(0, 0, size, size);
   miniCtx.save();
   miniCtx.translate(size / 2, size / 2);
-  miniCtx.scale(0.16, 0.16);
+  miniCtx.scale(0.26, 0.26);
   miniCtx.translate(-car.position.x, -car.position.z);
 
-  for (const road of world.roads) {
-    miniCtx.strokeStyle = road.main ? '#f5d76e' : '#eeeeee';
-    miniCtx.lineWidth = road.main ? 14 : 7;
-    miniCtx.beginPath();
-    road.points.forEach((p, index) => {
-      if (index === 0) miniCtx.moveTo(p.x, p.y);
-      else miniCtx.lineTo(p.x, p.y);
-    });
-    miniCtx.stroke();
-  }
+  miniCtx.strokeStyle = '#f5d76e';
+  miniCtx.lineWidth = 18;
+  miniCtx.beginPath();
+  miniCtx.moveTo(0, -350);
+  miniCtx.lineTo(0, 350);
+  miniCtx.stroke();
 
   miniCtx.fillStyle = '#a99b82';
-  for (const building of world.buildings) {
-    miniCtx.beginPath();
-    building.forEach((p, index) => {
-      if (index === 0) miniCtx.moveTo(p.x, p.y);
-      else miniCtx.lineTo(p.x, p.y);
-    });
-    miniCtx.closePath();
-    miniCtx.fill();
+  for (const mesh of world.buildings) {
+    miniCtx.fillRect(mesh.position.x - 8, mesh.position.z - 8, 16, 16);
   }
 
   miniCtx.fillStyle = '#ff3333';
   miniCtx.beginPath();
-  miniCtx.arc(car.position.x, car.position.z, 16, 0, Math.PI * 2);
+  miniCtx.arc(car.position.x, car.position.z, 13, 0, Math.PI * 2);
   miniCtx.fill();
   miniCtx.restore();
 }
@@ -107,6 +93,9 @@ function animate() {
 
   const previousPosition = car.position.clone();
   vehicle.update(delta);
+
+  // Keep the car visually grounded on the sloped Busby Road slice.
+  car.position.y = world.getHeight(car.position.x, car.position.z) + 0.1;
 
   if (world.collides(car.position, 3.2)) {
     car.position.copy(previousPosition);
