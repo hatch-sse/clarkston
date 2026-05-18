@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clarkston Simulator - Web Prototype</title>
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <title>Clarkston Simulator - Realistic Web Prototype</title>
+  <link rel="stylesheet" href="styles.css?v=6" />
 </head>
 <body>
   <div id="hud">
     <h1>Clarkston Simulator</h1>
-    <p id="status">Loading next-level Clarkston map…</p>
+    <p id="status">Loading realistic Clarkston map…</p>
     <div class="controls">
       <strong>Controls</strong><br />
       WASD / arrows: move or drive<br />
@@ -20,6 +20,15 @@
     </div>
     <div class="credit">Map data © OpenStreetMap contributors</div>
   </div>
+
+  <div id="dash">
+    <div><b>Mode</b> <span id="mode">Walking</span></div>
+    <div><b>Speed</b> <span id="speed">0</span> mph</div>
+    <div><b>Area</b> <span id="area">Clarkston Toll</span></div>
+    <div class="mission">Mission: find the red car, press <b>E</b>, then drive round Clarkston without hitting buildings.</div>
+  </div>
+
+  <canvas id="minimap" width="220" height="220" aria-label="Minimap"></canvas>
   <canvas id="game"></canvas>
 
   <script type="importmap">
@@ -29,6 +38,6 @@
     }
   }
   </script>
-  <script type="module" src="app.js?v=4"></script>
+  <script type="module" src="app-realistic.js?v=6"></script>
 </body>
 </html>
