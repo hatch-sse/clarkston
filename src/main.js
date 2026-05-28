@@ -194,7 +194,7 @@ function buildingOverlapsRoad(points) {
       if (pointInPolygon(a, points) || pointInPolygon(b, points)) return true;
       for (let i = 0; i < points.length; i += 1) {
         if (lineSegmentsIntersect(points[i], points[(i + 1) % points.length], a, b)) return true;
-        if (distanceToSegment(points[i], a, b).distance < road.width * 0.42) return true;
+        if (distanceToSegment(points[i], a, b) < road.width * 0.42) return true;
       }
     }
   }
@@ -262,6 +262,18 @@ function buildOverpassQuery() {
 }
 
 async function fetchOSM() {
+  try {
+    return await fetchPackagedMap();
+  } catch (error) {
+    console.warn('Packaged Clarkston map unavailable', error);
+  }
+
+  try {
+    return await fetchOSMMapTiles();
+  } catch (error) {
+    console.warn('OpenStreetMap tile load unavailable', error);
+  }
+
   const endpoints = [
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter'
@@ -288,10 +300,16 @@ async function fetchOSM() {
   return fetchOSMMapTiles();
 }
 
+async function fetchPackagedMap() {
+  const response = await fetch('data/clarkston-osm.json?v=20260528', { cache: 'force-cache' });
+  if (!response.ok) throw new Error(`Packaged Clarkston map returned ${response.status}`);
+  return response.json();
+}
+
 async function fetchOSMMapTiles() {
   const elements = new Map();
-  const cols = 3;
-  const rows = 2;
+  const cols = 8;
+  const rows = 6;
   const requests = [];
 
   for (let row = 0; row < rows; row += 1) {
@@ -304,8 +322,13 @@ async function fetchOSMMapTiles() {
     }
   }
 
-  const tiles = await Promise.all(requests);
-  for (const tile of tiles) {
+  const tiles = await Promise.allSettled(requests);
+  for (const result of tiles) {
+    if (result.status !== 'fulfilled') {
+      console.warn('OpenStreetMap tile skipped', result.reason);
+      continue;
+    }
+    const tile = result.value;
     for (const element of tile) elements.set(`${element.type}/${element.id}`, element);
   }
 
@@ -316,7 +339,7 @@ async function fetchOSMMapTiles() {
 async function fetchOSMTile(west, south, east, north) {
   const url = `https://api.openstreetmap.org/api/0.6/map?bbox=${west},${south},${east},${north}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22000);
+  const timeout = setTimeout(() => controller.abort(), 26000);
   const response = await fetch(url, { signal: controller.signal });
   clearTimeout(timeout);
   if (!response.ok) throw new Error(`OSM map tile returned ${response.status}`);
@@ -956,7 +979,7 @@ async function boot() {
   setLoading(10, 'Preparing Innes Driver...');
   statusEl.textContent = 'Loading current Clarkston map data...';
   try {
-    setLoading(30, 'Loading Clarkston roads and buildings...');
+    setLoading(30, 'Loading the full Clarkston map...');
     const data = await fetchOSM();
     setLoading(65, 'Drawing roads, shops and landmarks...');
     parseOSM(data);

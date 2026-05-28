@@ -5,7 +5,7 @@ A top-down browser driving game inspired by the original Grand Theft Auto camera
 ## What It Does
 
 - Rebuilds the game as a 2D canvas arcade driver with UK-style roads and white markings.
-- Loads current roads, buildings, shops and businesses from OpenStreetMap for the wider Clarkston area.
+- Loads a packaged OpenStreetMap snapshot of roads, buildings, shops and businesses for the wider Clarkston area.
 - Lets you drive a chunky 4x4 jeep, get out on foot, run around, and enter another parked car.
 - Adds road collision, building collision, named businesses, trees, a minimap, timer, best time and checkpoint sprint route.
 
