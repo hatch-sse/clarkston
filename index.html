@@ -3,39 +3,35 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clarkston Mini Open World</title>
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <title>Clarkston Sprint</title>
+  <link rel="stylesheet" href="styles.css?v=9" />
 </head>
 <body>
   <div id="hud">
-    <h1>Clarkston Mini Open World</h1>
+    <h1>Clarkston Sprint</h1>
     <p id="status">Booting mini engine…</p>
     <div class="controls">
       <strong>Controls</strong><br>
       WASD / arrows: drive<br>
       Shift: boost<br>
+      R: reset car<br>
+      Space: restart sprint<br>
     </div>
-    <div class="credit">Prototype open-world engine</div>
+    <div class="credit">Checkpoint sprint through Busby Road</div>
   </div>
 
   <div id="dash">
     <div><b>Mode</b> <span id="mode">Driving</span></div>
     <div><b>Speed</b> <span id="speed">0</span> mph</div>
+    <div><b>Timer</b> <span id="timer">--.--</span></div>
+    <div><b>Best</b> <span id="best">--.--</span></div>
     <div><b>Area</b> <span id="area">Clarkston Prototype</span></div>
-    <div class="mission">Mini engine prototype with modular systems enabled.</div>
+    <div class="mission" id="mission">Drive through the green start gate.</div>
   </div>
 
   <canvas id="minimap" width="220" height="220"></canvas>
   <canvas id="game"></canvas>
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.165.0/build/three.module.js"
-    }
-  }
-  </script>
-
-  <script type="module" src="src/main.js?v=8"></script>
+  <script type="module" src="src/main.js?v=10"></script>
 </body>
 </html>
