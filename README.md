@@ -5,7 +5,7 @@ A top-down browser driving game inspired by the original Grand Theft Auto camera
 ## What It Does
 
 - Rebuilds the game as a 2D canvas arcade driver.
-- Lets you drive a chunky 4x4 jeep through a stylised Clarkston street map.
+- Lets you drive a chunky 4x4 jeep through a stylised Clarkston Toll street map.
 - Adds road collision, shopfronts, trees, traffic cars, a minimap, timer, best time and checkpoint sprint route.
 
 ## Run It Locally

@@ -21,8 +21,8 @@ const keys = {
 };
 
 const jeep = {
-  x: 420,
-  y: 1240,
+  x: 1300,
+  y: 1180,
   angle: -Math.PI / 2,
   speed: 0,
   width: 42,
@@ -35,21 +35,24 @@ const jeep = {
   turnRate: 2.7
 };
 
-const roadSegments = [
-  { x: 230, y: 760, w: 2140, h: 170, name: 'Busby Road' },
-  { x: 880, y: 190, w: 170, h: 1350, name: 'Clarkston Road' },
-  { x: 340, y: 1130, w: 1480, h: 150, name: 'High Street' },
-  { x: 1560, y: 420, w: 150, h: 1050, name: 'Station Road' },
-  { x: 500, y: 340, w: 910, h: 120, name: 'Mearns Road' },
-  { x: 1750, y: 1030, w: 520, h: 120, name: 'Eastwoodmains' }
+const toll = { x: 1300, y: 900, radius: 88 };
+const roadPaths = [
+  { name: 'Busby Road', width: 118, main: true, points: [{ x: 1220, y: 80 }, { x: 1260, y: 440 }, { x: 1300, y: 900 }, { x: 1290, y: 1280 }, { x: 1340, y: 1720 }] },
+  { name: 'Clarkston Road', width: 96, main: true, points: [{ x: 1300, y: 900 }, { x: 1080, y: 720 }, { x: 840, y: 520 }, { x: 580, y: 320 }, { x: 320, y: 140 }] },
+  { name: 'Mearns Road', width: 92, main: true, points: [{ x: 1300, y: 900 }, { x: 1120, y: 1040 }, { x: 900, y: 1180 }, { x: 650, y: 1330 }, { x: 360, y: 1500 }] },
+  { name: 'Eastwoodmains Road', width: 96, main: true, points: [{ x: 1300, y: 900 }, { x: 1540, y: 880 }, { x: 1840, y: 830 }, { x: 2160, y: 760 }, { x: 2480, y: 700 }] },
+  { name: 'Eaglesham Road', width: 88, main: true, points: [{ x: 1300, y: 900 }, { x: 1480, y: 1080 }, { x: 1660, y: 1300 }, { x: 1900, y: 1600 }] },
+  { name: 'Sheddens Road', width: 76, points: [{ x: 1300, y: 900 }, { x: 1100, y: 860 }, { x: 820, y: 830 }, { x: 540, y: 780 }] },
+  { name: 'Station Road', width: 72, points: [{ x: 1500, y: 885 }, { x: 1570, y: 690 }, { x: 1650, y: 500 }] },
+  { name: 'Seres Road', width: 64, points: [{ x: 1260, y: 540 }, { x: 1060, y: 460 }, { x: 820, y: 420 }] }
 ];
 
 const checkpoints = [
-  { x: 420, y: 1160, label: 'Start' },
-  { x: 940, y: 840, label: 'Toll' },
-  { x: 1640, y: 840, label: 'Station' },
-  { x: 1680, y: 1130, label: 'Shops' },
-  { x: 940, y: 1150, label: 'Finish' }
+  { x: 1300, y: 1040, label: 'Start' },
+  { x: 1300, y: 900, label: 'Clarkston Toll' },
+  { x: 1645, y: 520, label: 'Station' },
+  { x: 1840, y: 830, label: 'Eastwoodmains' },
+  { x: 1120, y: 1040, label: 'Mearns Road' }
 ];
 
 const buildings = [];
@@ -80,32 +83,75 @@ function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-function pointInRect(x, y, rect, padding = 0) {
-  return x >= rect.x - padding && x <= rect.x + rect.w + padding && y >= rect.y - padding && y <= rect.y + rect.h + padding;
+function distanceToSegment(px, py, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return Math.hypot(px - a.x, py - a.y);
+  const t = Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / lengthSq));
+  const x = a.x + t * dx;
+  const y = a.y + t * dy;
+  return Math.hypot(px - x, py - y);
+}
+
+function nearestRoad(x, y) {
+  let best = { road: null, distance: Infinity };
+  for (const road of roadPaths) {
+    for (let i = 0; i < road.points.length - 1; i += 1) {
+      const distance = distanceToSegment(x, y, road.points[i], road.points[i + 1]);
+      if (distance < best.distance) best = { road, distance };
+    }
+  }
+  const tollDistance = Math.hypot(x - toll.x, y - toll.y);
+  if (tollDistance < best.distance) best = { road: { name: 'Clarkston Toll', width: toll.radius * 2 }, distance: tollDistance };
+  return best;
 }
 
 function isOnRoad(x, y) {
-  return roadSegments.some(road => pointInRect(x, y, road, 28));
+  const closest = nearestRoad(x, y);
+  return closest.road && closest.distance <= closest.road.width / 2 + 18;
+}
+
+function rectNearRoad(rect, padding = 32) {
+  const samples = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x, y: rect.y + rect.h },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }
+  ];
+  return samples.some(point => {
+    const closest = nearestRoad(point.x, point.y);
+    return closest.road && closest.distance <= closest.road.width / 2 + padding;
+  });
 }
 
 function addBuilding(x, y, w, h, label = '') {
-  if (roadSegments.some(road => rectsOverlap({ x, y, w, h }, road))) return;
+  if (rectNearRoad({ x, y, w, h })) return;
   buildings.push({ x, y, w, h, label, color: label ? '#cbb88d' : '#8c7460' });
 }
 
 function buildCity() {
-  const shopNames = ['MORRISONS', 'GREGGS', 'PHARMACY', 'CAFE', 'BARBER', 'BANK', 'STATION', 'NEWS'];
-  for (let i = 0; i < shopNames.length; i += 1) {
-    addBuilding(560 + i * 180, 620, 116, 96, shopNames[i]);
-    addBuilding(560 + i * 180, 940, 116, 96, shopNames[(i + 3) % shopNames.length]);
-  }
+  [
+    [1125, 770, 118, 82, 'MORRISONS'],
+    [1410, 785, 98, 72, 'GREGGS'],
+    [1135, 930, 96, 72, 'PHARMACY'],
+    [1395, 965, 96, 72, 'CAFE'],
+    [1220, 690, 82, 72, 'BANK'],
+    [1510, 610, 112, 84, 'STATION'],
+    [980, 930, 90, 74, 'BARBER'],
+    [1505, 930, 96, 74, 'NEWS'],
+    [1010, 1115, 104, 76, 'SHOPS'],
+    [1650, 730, 120, 82, 'OPTICIAN']
+  ].forEach(([x, y, w, h, label]) => buildings.push({ x, y, w, h, label, color: '#cbb88d' }));
 
-  for (let row = 0; row < 5; row += 1) {
-    for (let col = 0; col < 8; col += 1) {
-      addBuilding(145 + col * 210, 145 + row * 245, 86 + rand(row * 20 + col) * 38, 82, '');
-      addBuilding(1850 + col * 90, 290 + row * 245, 58, 78, '');
-    }
-  }
+  [
+    [1080, 250], [930, 365], [730, 470], [520, 590],
+    [520, 1250], [700, 1410], [950, 1320], [1100, 1245],
+    [1520, 1110], [1660, 1200], [1810, 1370], [1980, 1480],
+    [1760, 620], [1940, 690], [2140, 600], [2320, 560],
+    [1040, 570], [880, 640], [700, 720], [560, 900]
+  ].forEach(([x, y], index) => addBuilding(x, y, 86 + rand(index) * 40, 72 + rand(index + 20) * 32, ''));
 
   for (let i = 0; i < 90; i += 1) {
     const x = 80 + rand(i) * (world.width - 160);
@@ -114,10 +160,10 @@ function buildCity() {
   }
 
   traffic.push(
-    { x: 620, y: 802, angle: 0, speed: 95, path: roadSegments[0], color: '#2d74b8' },
-    { x: 1240, y: 887, angle: Math.PI, speed: 80, path: roadSegments[0], color: '#b83f2d' },
-    { x: 956, y: 430, angle: Math.PI / 2, speed: 70, path: roadSegments[1], color: '#d1d5db' },
-    { x: 1634, y: 1240, angle: -Math.PI / 2, speed: 78, path: roadSegments[3], color: '#1f2937' }
+    makeTrafficCar(roadPaths[0], 1, 90, '#2d74b8'),
+    makeTrafficCar(roadPaths[1], -1, 78, '#b83f2d'),
+    makeTrafficCar(roadPaths[3], 1, 82, '#d1d5db'),
+    makeTrafficCar(roadPaths[4], -1, 74, '#1f2937')
   );
 }
 
@@ -139,6 +185,12 @@ function saveBest(time) {
   return false;
 }
 
+function makeTrafficCar(road, direction, speed, color) {
+  const segmentIndex = direction > 0 ? 0 : road.points.length - 1;
+  const point = road.points[segmentIndex];
+  return { x: point.x, y: point.y, angle: 0, speed, road, direction, segmentIndex, color };
+}
+
 function resetRace(resetCar = false) {
   currentCheckpoint = 0;
   raceStarted = false;
@@ -149,8 +201,8 @@ function resetRace(resetCar = false) {
   statusEl.textContent = 'Top-down sprint ready.';
 
   if (resetCar) {
-    jeep.x = 420;
-    jeep.y = 1240;
+    jeep.x = 1300;
+    jeep.y = 1180;
     jeep.angle = -Math.PI / 2;
     jeep.speed = 0;
   }
@@ -175,7 +227,7 @@ function collidesWithWorld(x, y) {
 function updateJeep(delta) {
   const throttle = input.down('w', 'arrowup');
   const brake = input.down('s', 'arrowdown');
-  const steer = input.axis('d', 'a') + input.axis('arrowright', 'arrowleft');
+  const steer = input.axis('a', 'd') + input.axis('arrowleft', 'arrowright');
   const boost = input.down('shift');
 
   if (throttle) jeep.speed += jeep.acceleration * (boost ? 1.35 : 1) * delta;
@@ -201,13 +253,25 @@ function updateJeep(delta) {
 
 function updateTraffic(delta) {
   for (const car of traffic) {
-    car.x += Math.cos(car.angle) * car.speed * delta;
-    car.y += Math.sin(car.angle) * car.speed * delta;
+    const targetIndex = car.segmentIndex + car.direction;
+    const target = car.road.points[targetIndex];
+    if (!target) {
+      car.direction *= -1;
+      car.segmentIndex += car.direction;
+      continue;
+    }
 
-    if (!pointInRect(car.x, car.y, car.path, 16)) {
-      car.angle += Math.PI;
-      car.x = Math.max(car.path.x + 20, Math.min(car.x, car.path.x + car.path.w - 20));
-      car.y = Math.max(car.path.y + 20, Math.min(car.y, car.path.y + car.path.h - 20));
+    const dx = target.x - car.x;
+    const dy = target.y - car.y;
+    const distance = Math.hypot(dx, dy);
+    car.angle = Math.atan2(dy, dx);
+
+    if (distance < 8) {
+      car.segmentIndex = targetIndex;
+    } else {
+      const step = Math.min(distance, car.speed * delta);
+      car.x += (dx / distance) * step;
+      car.y += (dy / distance) * step;
     }
 
     if (Math.hypot(car.x - jeep.x, car.y - jeep.y) < 48) {
@@ -265,26 +329,68 @@ function drawWorld() {
     ctx.fill();
   }
 
-  for (const road of roadSegments) {
-    ctx.fillStyle = '#2e3338';
-    ctx.fillRect(road.x, road.y, road.w, road.h);
-    ctx.strokeStyle = '#d8bb38';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(road.x + 12, road.y + 12, road.w - 24, road.h - 24);
-    ctx.strokeStyle = '#e8e2ce';
-    ctx.setLineDash([28, 28]);
-    ctx.lineWidth = 5;
+  ctx.strokeStyle = '#1d2126';
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(1730, 80);
+  ctx.bezierCurveTo(1760, 520, 1690, 970, 1760, 1720);
+  ctx.stroke();
+  ctx.strokeStyle = '#bfc4ca';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(1714, 80);
+  ctx.bezierCurveTo(1744, 520, 1674, 970, 1744, 1720);
+  ctx.moveTo(1746, 80);
+  ctx.bezierCurveTo(1776, 520, 1706, 970, 1776, 1720);
+  ctx.stroke();
+
+  for (const road of roadPaths) {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#b8b4a9';
+    ctx.lineWidth = road.width + 26;
     ctx.beginPath();
-    if (road.w > road.h) {
-      ctx.moveTo(road.x + 30, road.y + road.h / 2);
-      ctx.lineTo(road.x + road.w - 30, road.y + road.h / 2);
-    } else {
-      ctx.moveTo(road.x + road.w / 2, road.y + 30);
-      ctx.lineTo(road.x + road.w / 2, road.y + road.h - 30);
-    }
+    road.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+
+    ctx.strokeStyle = road.main ? '#292f35' : '#343a40';
+    ctx.lineWidth = road.width;
+    ctx.beginPath();
+    road.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+
+    ctx.strokeStyle = road.main ? '#e8e2ce' : '#aeb6bf';
+    ctx.setLineDash(road.main ? [28, 30] : [18, 26]);
+    ctx.lineWidth = road.main ? 5 : 3;
+    ctx.beginPath();
+    road.points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
     ctx.stroke();
     ctx.setLineDash([]);
   }
+  ctx.lineCap = 'butt';
+
+  ctx.fillStyle = '#292f35';
+  ctx.beginPath();
+  ctx.arc(toll.x, toll.y, toll.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#e8e2ce';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(toll.x, toll.y, toll.radius - 20, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#3f7c4d';
+  ctx.beginPath();
+  ctx.arc(toll.x, toll.y, 34, 0, Math.PI * 2);
+  ctx.fill();
 
   for (const building of buildings) {
     ctx.fillStyle = '#443b35';
@@ -301,6 +407,16 @@ function drawWorld() {
       ctx.textAlign = 'center';
       ctx.fillText(building.label, building.x + building.w / 2, building.y + building.h - 13);
     }
+  }
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Clarkston Toll', toll.x, toll.y - 118);
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  for (const road of roadPaths.filter(path => path.main)) {
+    const point = road.points[Math.floor(road.points.length / 2)];
+    ctx.fillText(road.name, point.x, point.y - 18);
   }
 
   for (const prop of props) {
@@ -390,10 +506,23 @@ function drawMiniMap() {
 
   const sx = w / world.width;
   const sy = h / world.height;
-  miniCtx.fillStyle = '#46515c';
-  for (const road of roadSegments) {
-    miniCtx.fillRect(road.x * sx, road.y * sy, road.w * sx, road.h * sy);
+  for (const road of roadPaths) {
+    miniCtx.strokeStyle = '#46515c';
+    miniCtx.lineWidth = Math.max(3, road.width * sx);
+    miniCtx.lineCap = 'round';
+    miniCtx.lineJoin = 'round';
+    miniCtx.beginPath();
+    road.points.forEach((point, index) => {
+      if (index === 0) miniCtx.moveTo(point.x * sx, point.y * sy);
+      else miniCtx.lineTo(point.x * sx, point.y * sy);
+    });
+    miniCtx.stroke();
   }
+
+  miniCtx.fillStyle = '#53606b';
+  miniCtx.beginPath();
+  miniCtx.arc(toll.x * sx, toll.y * sy, toll.radius * sx, 0, Math.PI * 2);
+  miniCtx.fill();
 
   checkpoints.forEach((checkpoint, index) => {
     miniCtx.fillStyle = index === currentCheckpoint ? '#45ff7b' : '#94a3b8';
