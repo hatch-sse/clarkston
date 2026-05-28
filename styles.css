@@ -19,6 +19,54 @@ body {
   cursor: crosshair;
 }
 
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: #111714;
+  color: #f4f0e6;
+}
+
+#splash.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .35s ease;
+}
+
+.splash-inner {
+  width: min(420px, calc(100vw - 44px));
+}
+
+.splash-inner h1 {
+  margin: 0 0 12px;
+  font-size: 42px;
+  letter-spacing: 0;
+}
+
+.splash-inner p {
+  margin: 0 0 18px;
+  color: #b8c2b1;
+  font-size: 14px;
+}
+
+.loading-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #2f3933;
+  border: 1px solid rgba(255,255,255,.12);
+}
+
+#loading-bar {
+  width: 8%;
+  height: 100%;
+  border-radius: inherit;
+  background: #76d66d;
+  transition: width .25s ease;
+}
+
 #hud {
   position: fixed;
   z-index: 20;

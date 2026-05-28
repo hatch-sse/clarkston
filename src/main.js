@@ -12,6 +12,9 @@ const bestEl = document.querySelector('#best');
 const missionEl = document.querySelector('#mission');
 const mini = document.querySelector('#minimap');
 const miniCtx = mini?.getContext('2d');
+const splashEl = document.querySelector('#splash');
+const loadingTextEl = document.querySelector('#loading-text');
+const loadingBarEl = document.querySelector('#loading-bar');
 
 const input = new Input();
 const METRES_PER_DEGREE = 111320;
@@ -79,6 +82,17 @@ function resize() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 }
 
+function setLoading(progress, text) {
+  if (loadingBarEl) loadingBarEl.style.width = `${Math.max(4, Math.min(100, progress))}%`;
+  if (loadingTextEl) loadingTextEl.textContent = text;
+}
+
+function hideSplash() {
+  if (!splashEl) return;
+  splashEl.classList.add('hidden');
+  setTimeout(() => splashEl.remove(), 500);
+}
+
 function rand(seed) {
   const value = Math.sin(seed * 999.91) * 10000;
   return value - Math.floor(value);
@@ -118,11 +132,17 @@ function snapToRoad(x, y) {
   if (!closest.road) return { x, y, angle: -Math.PI / 2 };
   const a = closest.road.points[closest.segmentIndex];
   const b = closest.road.points[closest.segmentIndex + 1];
-  return closestPointOnSegment(x, y, a, b);
+  const centre = closestPointOnSegment(x, y, a, b);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const normal = { x: dy / length, y: -dx / length };
+  const laneOffset = Math.min(closest.road.width * 0.23, 11);
+  return { x: centre.x + normal.x * laneOffset, y: centre.y + normal.y * laneOffset, angle: centre.angle };
 }
 
 function isOnRoad(x, y, padding = 14) {
-  const closest = nearestRoad(x, y);
+  const closest = nearestRoad(x, y, map.roads.filter(road => !road.foot));
   return Boolean(closest.road && closest.distance <= closest.road.width / 2 + padding);
 }
 
@@ -167,13 +187,14 @@ function buildingOverlapsRoad(points) {
   const centre = polygonCentroid(points);
   if (isOnRoad(centre.x, centre.y, -4)) return true;
 
-  for (const road of map.roads) {
+  for (const road of map.roads.filter(road => !road.foot)) {
     for (let r = 0; r < road.points.length - 1; r += 1) {
       const a = road.points[r];
       const b = road.points[r + 1];
       if (pointInPolygon(a, points) || pointInPolygon(b, points)) return true;
       for (let i = 0; i < points.length; i += 1) {
         if (lineSegmentsIntersect(points[i], points[(i + 1) % points.length], a, b)) return true;
+        if (distanceToSegment(points[i], a, b).distance < road.width * 0.42) return true;
       }
     }
   }
@@ -185,12 +206,12 @@ function collidesWithBuilding(x, y) {
 }
 
 function getRoadWidth(highway) {
-  if (['primary', 'secondary'].includes(highway)) return 32;
-  if (['tertiary', 'trunk'].includes(highway)) return 28;
-  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 18;
-  if (['service'].includes(highway)) return 13;
+  if (['primary', 'secondary'].includes(highway)) return 58;
+  if (['tertiary', 'trunk'].includes(highway)) return 52;
+  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 42;
+  if (['service'].includes(highway)) return 30;
   if (['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway)) return 5;
-  return 16;
+  return 38;
 }
 
 function labelFromTags(tags = {}) {
@@ -459,9 +480,9 @@ function createParkedVehicles() {
       const dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
       const normal = { x: -dir.y, y: dir.x };
       for (let d = 70; d < length - 40 && made < 34; d += 210) {
-        const side = made % 2 === 0 ? 1 : -1;
-        const x = a.x + dir.x * d + normal.x * side * Math.max(4, road.width * 0.28);
-        const y = a.y + dir.y * d + normal.y * side * Math.max(4, road.width * 0.28);
+        const side = 1;
+        const x = a.x + dir.x * d + normal.x * side * Math.max(8, road.width * 0.32);
+        const y = a.y + dir.y * d + normal.y * side * Math.max(8, road.width * 0.32);
         if (collidesWithBuilding(x, y)) continue;
         vehicles.push(createVehicle(x, y, Math.atan2(dir.y, dir.x), made % 5 === 0 ? '#2d74b8' : '#8f3f2d', made % 5 === 0 ? 'Estate Car' : 'Parked Car', false));
         made += 1;
@@ -483,8 +504,8 @@ function createVehicle(x, y, angle, color, name, playerOwned) {
     name,
     playerOwned,
     speed: 0,
-    width: playerOwned ? 21 : 19,
-    length: playerOwned ? 34 : 29,
+    width: playerOwned ? 16 : 15,
+    length: playerOwned ? 27 : 24,
     maxSpeed: playerOwned ? 540 : 430,
     reverseSpeed: -190,
     acceleration: playerOwned ? 420 : 360,
@@ -545,12 +566,31 @@ function updateVehicle(vehicle, delta) {
 
   const nextX = vehicle.x + Math.cos(vehicle.angle) * vehicle.speed * delta;
   const nextY = vehicle.y + Math.sin(vehicle.angle) * vehicle.speed * delta;
-  if (!isOnRoad(nextX, nextY, 24) || collidesWithBuilding(nextX, nextY)) {
+  const lane = leftLaneTarget(nextX, nextY, vehicle.angle);
+  if (!isOnRoad(nextX, nextY, 32) || lane.distance > 42 || collidesWithBuilding(nextX, nextY)) {
     vehicle.speed *= -0.25;
     return;
   }
   vehicle.x = nextX;
   vehicle.y = nextY;
+}
+
+function leftLaneTarget(x, y, angle = 0) {
+  const closest = nearestRoad(x, y, map.roads.filter(road => !road.foot));
+  if (!closest.road) return { x, y, distance: Infinity };
+  const a = closest.road.points[closest.segmentIndex];
+  const b = closest.road.points[closest.segmentIndex + 1];
+  const centre = closestPointOnSegment(x, y, a, b);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const roadDir = { x: dx / length, y: dy / length };
+  const heading = { x: Math.cos(angle), y: Math.sin(angle) };
+  const direction = heading.x * roadDir.x + heading.y * roadDir.y < 0 ? -1 : 1;
+  const normal = { x: roadDir.y * direction, y: -roadDir.x * direction };
+  const laneOffset = Math.min(closest.road.width * 0.23, 11);
+  const lanePoint = { x: centre.x + normal.x * laneOffset, y: centre.y + normal.y * laneOffset };
+  return { ...lanePoint, distance: Math.hypot(x - lanePoint.x, y - lanePoint.y) };
 }
 
 function updateWalker(delta) {
@@ -667,16 +707,17 @@ function drawMap() {
   for (const rail of map.rails) drawPolyline(rail.points, '#1d2126', 8, false);
   for (const rail of map.rails) drawPolyline(rail.points, '#bfc4ca', 3, true, [18, 18]);
 
-  for (const road of map.roads.filter(item => !item.foot)) {
-    drawPolyline(road.points, '#b9b3a5', road.width + 10, false);
-    drawPolyline(road.points, road.main ? '#30353a' : '#3a3f44', road.width, false);
-    if (road.main) drawPolyline(road.points, '#d7d3c7', 2, true, [18, 24]);
-  }
-  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, '#bdb8aa', road.width, false);
-
   for (const building of map.buildings) {
     if (building.bounds.right < visible.left || building.bounds.left > visible.right || building.bounds.bottom < visible.top || building.bounds.top > visible.bottom) continue;
     drawBuilding(building);
+  }
+
+  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, 'rgba(224, 219, 196, .22)', 2, false);
+
+  for (const road of map.roads.filter(item => !item.foot)) {
+    drawPolyline(road.points, '#d8d1b8', road.width + 18, false);
+    drawPolyline(road.points, '#222b37', road.width, false);
+    drawLaneMarkings(road);
   }
   drawLabels();
 }
@@ -691,6 +732,22 @@ function drawPolyline(points, color, width, dashed, dash = []) {
   if (dashed) ctx.setLineDash(dash);
   ctx.beginPath();
   points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawLaneMarkings(road) {
+  if (road.width < 34) return;
+  ctx.save();
+  ctx.strokeStyle = '#f2f0e8';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.setLineDash([20, 34]);
+  ctx.beginPath();
+  road.points.forEach((point, index) => {
     if (index === 0) ctx.moveTo(point.x, point.y);
     else ctx.lineTo(point.x, point.y);
   });
@@ -782,10 +839,10 @@ function drawVehicle(vehicle, isActive) {
   ctx.fillStyle = '#94a3b8';
   ctx.fillRect(-vehicle.width * 0.31, -vehicle.length * 0.43, vehicle.width * 0.62, vehicle.length * 0.16);
   ctx.fillStyle = '#111827';
-  ctx.fillRect(-vehicle.width / 2 - 3, -vehicle.length * 0.35, 5, 8);
-  ctx.fillRect(vehicle.width / 2 - 2, -vehicle.length * 0.35, 5, 8);
-  ctx.fillRect(-vehicle.width / 2 - 3, vehicle.length * 0.18, 5, 8);
-  ctx.fillRect(vehicle.width / 2 - 2, vehicle.length * 0.18, 5, 8);
+  ctx.fillRect(-vehicle.width / 2 - 2, -vehicle.length * 0.35, 4, 7);
+  ctx.fillRect(vehicle.width / 2 - 2, -vehicle.length * 0.35, 4, 7);
+  ctx.fillRect(-vehicle.width / 2 - 2, vehicle.length * 0.18, 4, 7);
+  ctx.fillRect(vehicle.width / 2 - 2, vehicle.length * 0.18, 4, 7);
 
   if (vehicle.playerOwned) {
     ctx.fillStyle = '#f8fafc';
@@ -896,15 +953,23 @@ function tick(now) {
 async function boot() {
   resize();
   bestEl.textContent = formatTime(readBest());
+  setLoading(10, 'Preparing Innes Driver...');
   statusEl.textContent = 'Loading current Clarkston map data...';
   try {
-    parseOSM(await fetchOSM());
+    setLoading(30, 'Loading Clarkston roads and buildings...');
+    const data = await fetchOSM();
+    setLoading(65, 'Drawing roads, shops and landmarks...');
+    parseOSM(data);
   } catch (error) {
     console.warn(error);
+    setLoading(65, 'Using backup Clarkston map...');
     buildFallbackMap();
   }
+  setLoading(84, 'Placing vehicles...');
   createParkedVehicles();
   statusEl.textContent = map.source;
+  setLoading(100, 'Ready');
+  setTimeout(hideSplash, 300);
   requestAnimationFrame(tick);
 }
 
