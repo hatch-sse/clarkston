@@ -42,7 +42,7 @@ const player = {
   y: 0,
   angle: -Math.PI / 2,
   speed: 0,
-  radius: 12
+  radius: 7
 };
 
 let vehicles = [];
@@ -93,6 +93,15 @@ function distanceToSegment(px, py, a, b) {
   return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }
 
+function closestPointOnSegment(px, py, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return { x: a.x, y: a.y, angle: 0 };
+  const t = Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / lengthSq));
+  return { x: a.x + t * dx, y: a.y + t * dy, angle: Math.atan2(dy, dx) };
+}
+
 function nearestRoad(x, y, roads = map.roads) {
   let best = { road: null, distance: Infinity, segmentIndex: 0 };
   for (const road of roads) {
@@ -102,6 +111,14 @@ function nearestRoad(x, y, roads = map.roads) {
     }
   }
   return best;
+}
+
+function snapToRoad(x, y) {
+  const closest = nearestRoad(x, y, map.roads.filter(road => !road.foot));
+  if (!closest.road) return { x, y, angle: -Math.PI / 2 };
+  const a = closest.road.points[closest.segmentIndex];
+  const b = closest.road.points[closest.segmentIndex + 1];
+  return closestPointOnSegment(x, y, a, b);
 }
 
 function isOnRoad(x, y, padding = 14) {
@@ -117,6 +134,16 @@ function polygonCentroid(points) {
     y += point.y;
   }
   return { x: x / points.length, y: y / points.length };
+}
+
+function polygonArea(points) {
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(area) / 2;
 }
 
 function pointInPolygon(point, polygon) {
@@ -158,12 +185,12 @@ function collidesWithBuilding(x, y) {
 }
 
 function getRoadWidth(highway) {
-  if (['primary', 'secondary'].includes(highway)) return 46;
-  if (['tertiary', 'trunk'].includes(highway)) return 40;
-  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 30;
-  if (['service'].includes(highway)) return 22;
-  if (['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway)) return 10;
-  return 26;
+  if (['primary', 'secondary'].includes(highway)) return 32;
+  if (['tertiary', 'trunk'].includes(highway)) return 28;
+  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 18;
+  if (['service'].includes(highway)) return 13;
+  if (['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway)) return 5;
+  return 16;
 }
 
 function labelFromTags(tags = {}) {
@@ -355,12 +382,13 @@ function parseOSM(data) {
     const centre = way.center ? project(way.center.lat, way.center.lon) : polygonCentroid(points);
     const label = labelFromTags(tags);
 
-    if (tags.building && closed && !buildingOverlapsRoad(points)) {
+    if (tags.building && closed && polygonArea(points) > 90 && !buildingOverlapsRoad(points)) {
       map.buildings.push({
         points,
         label,
         business: isBusiness(tags),
-        color: isBusiness(tags) ? '#c9b17d' : '#8d7964'
+        color: isBusiness(tags) ? '#c9b17d' : '#8d7964',
+        bounds: getBounds(points)
       });
     }
 
@@ -376,6 +404,15 @@ function parseOSM(data) {
 
   map.loaded = true;
   map.source = `${map.roads.length} roads, ${map.buildings.length} buildings and ${map.labels.filter(label => label.important).length} named places from OpenStreetMap`;
+}
+
+function getBounds(points) {
+  return {
+    left: Math.min(...points.map(point => point.x)),
+    right: Math.max(...points.map(point => point.x)),
+    top: Math.min(...points.map(point => point.y)),
+    bottom: Math.max(...points.map(point => point.y))
+  };
 }
 
 function buildFallbackMap() {
@@ -408,8 +445,9 @@ function buildFallbackMap() {
 
 function createParkedVehicles() {
   vehicles = [];
-  const start = project(55.7842, -4.2763);
-  vehicles.push(createVehicle(start.x, start.y, -Math.PI / 2, '#3f7f3f', '4x4 Jeep', true));
+  const startPoint = project(55.7842, -4.2763);
+  const start = snapToRoad(startPoint.x, startPoint.y);
+  vehicles.push(createVehicle(start.x, start.y, start.angle, '#3f7f3f', '4x4 Jeep', true));
 
   let made = 0;
   for (const road of map.roads.filter(item => !item.foot && item.width > 24)) {
@@ -422,8 +460,8 @@ function createParkedVehicles() {
       const normal = { x: -dir.y, y: dir.x };
       for (let d = 70; d < length - 40 && made < 34; d += 210) {
         const side = made % 2 === 0 ? 1 : -1;
-        const x = a.x + dir.x * d + normal.x * side * (road.width / 2 + 18);
-        const y = a.y + dir.y * d + normal.y * side * (road.width / 2 + 18);
+        const x = a.x + dir.x * d + normal.x * side * Math.max(4, road.width * 0.28);
+        const y = a.y + dir.y * d + normal.y * side * Math.max(4, road.width * 0.28);
         if (collidesWithBuilding(x, y)) continue;
         vehicles.push(createVehicle(x, y, Math.atan2(dir.y, dir.x), made % 5 === 0 ? '#2d74b8' : '#8f3f2d', made % 5 === 0 ? 'Estate Car' : 'Parked Car', false));
         made += 1;
@@ -445,8 +483,8 @@ function createVehicle(x, y, angle, color, name, playerOwned) {
     name,
     playerOwned,
     speed: 0,
-    width: playerOwned ? 42 : 38,
-    length: playerOwned ? 68 : 58,
+    width: playerOwned ? 21 : 19,
+    length: playerOwned ? 34 : 29,
     maxSpeed: playerOwned ? 540 : 430,
     reverseSpeed: -190,
     acceleration: playerOwned ? 420 : 360,
@@ -465,8 +503,9 @@ function resetRace(resetCar = false) {
   missionEl.textContent = 'Drive through the green marker. Press E to get out or enter nearby cars.';
   statusEl.textContent = map.source;
   if (resetCar && vehicles[0]) {
-    const start = project(55.7842, -4.2763);
-    Object.assign(vehicles[0], { x: start.x, y: start.y, angle: -Math.PI / 2, speed: 0 });
+    const startPoint = project(55.7842, -4.2763);
+    const start = snapToRoad(startPoint.x, startPoint.y);
+    Object.assign(vehicles[0], { x: start.x, y: start.y, angle: start.angle, speed: 0 });
     activeVehicle = vehicles[0];
     mode = 'driving';
   }
@@ -506,7 +545,7 @@ function updateVehicle(vehicle, delta) {
 
   const nextX = vehicle.x + Math.cos(vehicle.angle) * vehicle.speed * delta;
   const nextY = vehicle.y + Math.sin(vehicle.angle) * vehicle.speed * delta;
-  if (!isOnRoad(nextX, nextY) || collidesWithBuilding(nextX, nextY)) {
+  if (!isOnRoad(nextX, nextY, 24) || collidesWithBuilding(nextX, nextY)) {
     vehicle.speed *= -0.25;
     return;
   }
@@ -608,11 +647,18 @@ function updateCamera() {
 }
 
 function drawMap() {
-  ctx.fillStyle = '#5f8f62';
+  const visible = {
+    left: camera.x - 90,
+    right: camera.x + window.innerWidth + 90,
+    top: camera.y - 90,
+    bottom: camera.y + window.innerHeight + 90
+  };
+
+  ctx.fillStyle = '#647f58';
   ctx.fillRect(0, 0, world.width, world.height);
 
-  for (let i = 0; i < 90; i += 1) {
-    ctx.fillStyle = i % 2 ? '#568a5b' : '#4e8057';
+  for (let i = 0; i < 36; i += 1) {
+    ctx.fillStyle = i % 2 ? '#6b8760' : '#5f7a57';
     ctx.beginPath();
     ctx.arc(80 + rand(i) * (world.width - 160), 80 + rand(i + 60) * (world.height - 160), 20 + rand(i + 20) * 48, 0, Math.PI * 2);
     ctx.fill();
@@ -622,13 +668,16 @@ function drawMap() {
   for (const rail of map.rails) drawPolyline(rail.points, '#bfc4ca', 3, true, [18, 18]);
 
   for (const road of map.roads.filter(item => !item.foot)) {
-    drawPolyline(road.points, '#b8b4a9', road.width + 18, false);
-    drawPolyline(road.points, road.main ? '#292f35' : '#343a40', road.width, false);
-    drawPolyline(road.points, road.main ? '#e8e2ce' : '#aeb6bf', road.main ? 4 : 2, true, road.main ? [26, 30] : [14, 24]);
+    drawPolyline(road.points, '#b9b3a5', road.width + 10, false);
+    drawPolyline(road.points, road.main ? '#30353a' : '#3a3f44', road.width, false);
+    if (road.main) drawPolyline(road.points, '#d7d3c7', 2, true, [18, 24]);
   }
-  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, '#bbb6aa', road.width, false);
+  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, '#bdb8aa', road.width, false);
 
-  for (const building of map.buildings) drawBuilding(building);
+  for (const building of map.buildings) {
+    if (building.bounds.right < visible.left || building.bounds.left > visible.right || building.bounds.bottom < visible.top || building.bounds.top > visible.bottom) continue;
+    drawBuilding(building);
+  }
   drawLabels();
 }
 
@@ -660,8 +709,8 @@ function drawBuilding(building) {
   ctx.fillStyle = building.color;
   drawPolygon(building.points);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(20, 26, 32, .55)';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(20, 26, 32, .38)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 }
 
@@ -675,6 +724,7 @@ function drawPolygon(points) {
 }
 
 function drawLabels() {
+  const focus = mode === 'driving' && activeVehicle ? activeVehicle : player;
   const visible = {
     left: camera.x - 60,
     right: camera.x + window.innerWidth + 60,
@@ -683,17 +733,19 @@ function drawLabels() {
   };
   const labels = map.labels
     .filter(item => item.x > visible.left && item.x < visible.right && item.y > visible.top && item.y < visible.bottom)
-    .sort((a, b) => Number(a.important) - Number(b.important));
+    .map(item => ({ ...item, distance: Math.hypot(item.x - focus.x, item.y - focus.y) }))
+    .filter(item => item.important ? item.distance < 280 : item.distance < 420)
+    .sort((a, b) => a.distance - b.distance);
 
-  for (const item of labels.slice(-80)) {
+  for (const item of labels.slice(0, 10)) {
     const important = item.important;
-    ctx.font = important ? 'bold 13px system-ui, sans-serif' : 'bold 16px system-ui, sans-serif';
+    ctx.font = important ? 'bold 9px system-ui, sans-serif' : 'bold 10px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    const width = Math.min(180, ctx.measureText(item.label).width + 16);
-    ctx.fillStyle = important ? 'rgba(12, 18, 24, .78)' : 'rgba(248, 250, 252, .86)';
-    ctx.fillRect(item.x - width / 2, item.y - 24, width, 20);
-    ctx.fillStyle = important ? '#ffffff' : '#172033';
-    ctx.fillText(item.label, item.x, item.y - 10);
+    const width = Math.min(96, ctx.measureText(item.label).width + 8);
+    ctx.fillStyle = important ? 'rgba(12, 18, 24, .58)' : 'rgba(248, 250, 252, .62)';
+    ctx.fillRect(item.x - width / 2, item.y - 15, width, 12);
+    ctx.fillStyle = important ? '#f8fafc' : '#172033';
+    ctx.fillText(item.label, item.x, item.y - 6, width - 6);
   }
 }
 
@@ -722,7 +774,7 @@ function drawVehicle(vehicle, isActive) {
   ctx.rotate(vehicle.angle + Math.PI / 2);
 
   ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.fillRect(-vehicle.width / 2 - 3, -vehicle.length / 2 + 4, vehicle.width + 6, vehicle.length + 4);
+  ctx.fillRect(-vehicle.width / 2 - 2, -vehicle.length / 2 + 3, vehicle.width + 4, vehicle.length + 3);
   ctx.fillStyle = vehicle.color;
   ctx.fillRect(-vehicle.width / 2, -vehicle.length / 2, vehicle.width, vehicle.length);
   ctx.fillStyle = vehicle.playerOwned ? '#1f3d2d' : '#111827';
@@ -730,10 +782,10 @@ function drawVehicle(vehicle, isActive) {
   ctx.fillStyle = '#94a3b8';
   ctx.fillRect(-vehicle.width * 0.31, -vehicle.length * 0.43, vehicle.width * 0.62, vehicle.length * 0.16);
   ctx.fillStyle = '#111827';
-  ctx.fillRect(-vehicle.width / 2 - 5, -vehicle.length * 0.35, 8, 15);
-  ctx.fillRect(vehicle.width / 2 - 3, -vehicle.length * 0.35, 8, 15);
-  ctx.fillRect(-vehicle.width / 2 - 5, vehicle.length * 0.18, 8, 15);
-  ctx.fillRect(vehicle.width / 2 - 3, vehicle.length * 0.18, 8, 15);
+  ctx.fillRect(-vehicle.width / 2 - 3, -vehicle.length * 0.35, 5, 8);
+  ctx.fillRect(vehicle.width / 2 - 2, -vehicle.length * 0.35, 5, 8);
+  ctx.fillRect(-vehicle.width / 2 - 3, vehicle.length * 0.18, 5, 8);
+  ctx.fillRect(vehicle.width / 2 - 2, vehicle.length * 0.18, 5, 8);
 
   if (vehicle.playerOwned) {
     ctx.fillStyle = '#f8fafc';
@@ -742,8 +794,8 @@ function drawVehicle(vehicle, isActive) {
 
   if (isActive) {
     ctx.strokeStyle = '#45ff7b';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-vehicle.width / 2 - 5, -vehicle.length / 2 - 5, vehicle.width + 10, vehicle.length + 10);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-vehicle.width / 2 - 4, -vehicle.length / 2 - 4, vehicle.width + 8, vehicle.length + 8);
   }
   ctx.restore();
 }
