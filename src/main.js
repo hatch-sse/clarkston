@@ -14,50 +14,40 @@ const mini = document.querySelector('#minimap');
 const miniCtx = mini?.getContext('2d');
 
 const input = new Input();
-const world = { width: 2600, height: 1800 };
+const METRES_PER_DEGREE = 111320;
+const BOUNDS = { south: 55.7785, west: -4.3025, north: 55.8008, east: -4.2460 };
+const MID_LAT = (BOUNDS.south + BOUNDS.north) / 2;
+const SCALE = 1.34;
+const PADDING = 220;
+const lonMetres = (BOUNDS.east - BOUNDS.west) * METRES_PER_DEGREE * Math.cos(MID_LAT * Math.PI / 180);
+const latMetres = (BOUNDS.north - BOUNDS.south) * METRES_PER_DEGREE;
+const world = {
+  width: Math.round(lonMetres * SCALE + PADDING * 2),
+  height: Math.round(latMetres * SCALE + PADDING * 2)
+};
 const camera = { x: 0, y: 0 };
-const keys = {
-  best: 'clarkstonTopDownBest'
+const keys = { best: 'clarkstonTopDownBest' };
+
+const map = {
+  roads: [],
+  rails: [],
+  buildings: [],
+  labels: [],
+  loaded: false,
+  source: 'Loading OpenStreetMap...'
 };
 
-const jeep = {
-  x: 1300,
-  y: 1180,
+const player = {
+  x: 0,
+  y: 0,
   angle: -Math.PI / 2,
   speed: 0,
-  width: 42,
-  length: 68,
-  maxSpeed: 540,
-  reverseSpeed: -210,
-  acceleration: 420,
-  brakePower: 520,
-  drag: 0.965,
-  turnRate: 2.7
+  radius: 12
 };
 
-const toll = { x: 1300, y: 900, radius: 88 };
-const roadPaths = [
-  { name: 'Busby Road', width: 118, main: true, points: [{ x: 1220, y: 80 }, { x: 1260, y: 440 }, { x: 1300, y: 900 }, { x: 1290, y: 1280 }, { x: 1340, y: 1720 }] },
-  { name: 'Clarkston Road', width: 96, main: true, points: [{ x: 1300, y: 900 }, { x: 1080, y: 720 }, { x: 840, y: 520 }, { x: 580, y: 320 }, { x: 320, y: 140 }] },
-  { name: 'Mearns Road', width: 92, main: true, points: [{ x: 1300, y: 900 }, { x: 1120, y: 1040 }, { x: 900, y: 1180 }, { x: 650, y: 1330 }, { x: 360, y: 1500 }] },
-  { name: 'Eastwoodmains Road', width: 96, main: true, points: [{ x: 1300, y: 900 }, { x: 1540, y: 880 }, { x: 1840, y: 830 }, { x: 2160, y: 760 }, { x: 2480, y: 700 }] },
-  { name: 'Eaglesham Road', width: 88, main: true, points: [{ x: 1300, y: 900 }, { x: 1480, y: 1080 }, { x: 1660, y: 1300 }, { x: 1900, y: 1600 }] },
-  { name: 'Sheddens Road', width: 76, points: [{ x: 1300, y: 900 }, { x: 1100, y: 860 }, { x: 820, y: 830 }, { x: 540, y: 780 }] },
-  { name: 'Station Road', width: 72, points: [{ x: 1500, y: 885 }, { x: 1570, y: 690 }, { x: 1650, y: 500 }] },
-  { name: 'Seres Road', width: 64, points: [{ x: 1260, y: 540 }, { x: 1060, y: 460 }, { x: 820, y: 420 }] }
-];
-
-const checkpoints = [
-  { x: 1300, y: 1040, label: 'Start' },
-  { x: 1300, y: 900, label: 'Clarkston Toll' },
-  { x: 1645, y: 520, label: 'Station' },
-  { x: 1840, y: 830, label: 'Eastwoodmains' },
-  { x: 1120, y: 1040, label: 'Mearns Road' }
-];
-
-const buildings = [];
-const props = [];
-const traffic = [];
+let vehicles = [];
+let activeVehicle = null;
+let mode = 'driving';
 let currentCheckpoint = 0;
 let raceStarted = false;
 let raceFinished = false;
@@ -65,9 +55,19 @@ let startTime = 0;
 let elapsed = 0;
 let lastTime = performance.now();
 
-function rand(seed) {
-  const value = Math.sin(seed * 999.91) * 10000;
-  return value - Math.floor(value);
+const checkpoints = [
+  { lat: 55.7857, lon: -4.2764, label: 'Clarkston Toll' },
+  { lat: 55.7892, lon: -4.2769, label: 'Busby Road' },
+  { lat: 55.7906, lon: -4.2831, label: 'Clarkston Road' },
+  { lat: 55.7852, lon: -4.2663, label: 'Eastwoodmains Road' },
+  { lat: 55.7821, lon: -4.2806, label: 'Mearns Road' }
+].map(point => ({ ...project(point.lat, point.lon), label: point.label }));
+
+function project(lat, lon) {
+  return {
+    x: PADDING + (lon - BOUNDS.west) * METRES_PER_DEGREE * Math.cos(MID_LAT * Math.PI / 180) * SCALE,
+    y: PADDING + (BOUNDS.north - lat) * METRES_PER_DEGREE * SCALE
+  };
 }
 
 function resize() {
@@ -79,8 +79,9 @@ function resize() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 }
 
-function rectsOverlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+function rand(seed) {
+  const value = Math.sin(seed * 999.91) * 10000;
+  return value - Math.floor(value);
 }
 
 function distanceToSegment(px, py, a, b) {
@@ -89,82 +90,386 @@ function distanceToSegment(px, py, a, b) {
   const lengthSq = dx * dx + dy * dy;
   if (lengthSq === 0) return Math.hypot(px - a.x, py - a.y);
   const t = Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / lengthSq));
-  const x = a.x + t * dx;
-  const y = a.y + t * dy;
-  return Math.hypot(px - x, py - y);
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }
 
-function nearestRoad(x, y) {
-  let best = { road: null, distance: Infinity };
-  for (const road of roadPaths) {
+function nearestRoad(x, y, roads = map.roads) {
+  let best = { road: null, distance: Infinity, segmentIndex: 0 };
+  for (const road of roads) {
     for (let i = 0; i < road.points.length - 1; i += 1) {
       const distance = distanceToSegment(x, y, road.points[i], road.points[i + 1]);
-      if (distance < best.distance) best = { road, distance };
+      if (distance < best.distance) best = { road, distance, segmentIndex: i };
     }
   }
-  const tollDistance = Math.hypot(x - toll.x, y - toll.y);
-  if (tollDistance < best.distance) best = { road: { name: 'Clarkston Toll', width: toll.radius * 2 }, distance: tollDistance };
   return best;
 }
 
-function isOnRoad(x, y) {
+function isOnRoad(x, y, padding = 14) {
   const closest = nearestRoad(x, y);
-  return closest.road && closest.distance <= closest.road.width / 2 + 18;
+  return Boolean(closest.road && closest.distance <= closest.road.width / 2 + padding);
 }
 
-function rectNearRoad(rect, padding = 32) {
-  const samples = [
-    { x: rect.x, y: rect.y },
-    { x: rect.x + rect.w, y: rect.y },
-    { x: rect.x, y: rect.y + rect.h },
-    { x: rect.x + rect.w, y: rect.y + rect.h },
-    { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }
+function polygonCentroid(points) {
+  let x = 0;
+  let y = 0;
+  for (const point of points) {
+    x += point.x;
+    y += point.y;
+  }
+  return { x: x / points.length, y: y / points.length };
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const intersect = ((a.y > point.y) !== (b.y > point.y)) &&
+      (point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function lineSegmentsIntersect(a, b, c, d) {
+  const ccw = (p, q, r) => (r.y - p.y) * (q.x - p.x) > (q.y - p.y) * (r.x - p.x);
+  return ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+}
+
+function buildingOverlapsRoad(points) {
+  const centre = polygonCentroid(points);
+  if (isOnRoad(centre.x, centre.y, -4)) return true;
+
+  for (const road of map.roads) {
+    for (let r = 0; r < road.points.length - 1; r += 1) {
+      const a = road.points[r];
+      const b = road.points[r + 1];
+      if (pointInPolygon(a, points) || pointInPolygon(b, points)) return true;
+      for (let i = 0; i < points.length; i += 1) {
+        if (lineSegmentsIntersect(points[i], points[(i + 1) % points.length], a, b)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function collidesWithBuilding(x, y) {
+  return map.buildings.some(building => pointInPolygon({ x, y }, building.points));
+}
+
+function getRoadWidth(highway) {
+  if (['primary', 'secondary'].includes(highway)) return 46;
+  if (['tertiary', 'trunk'].includes(highway)) return 40;
+  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 30;
+  if (['service'].includes(highway)) return 22;
+  if (['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway)) return 10;
+  return 26;
+}
+
+function labelFromTags(tags = {}) {
+  return tags.name || tags.brand || tags.operator || tags['addr:housename'] || '';
+}
+
+function isBusiness(tags = {}) {
+  return Boolean(tags.shop || tags.amenity || tags.office || tags.tourism || tags.healthcare || tags.craft || tags.leisure);
+}
+
+function labelKind(tags = {}) {
+  if (tags.shop) return tags.shop;
+  if (tags.amenity) return tags.amenity;
+  if (tags.office) return tags.office;
+  if (tags.tourism) return tags.tourism;
+  if (tags.healthcare) return tags.healthcare;
+  if (tags.leisure) return tags.leisure;
+  return '';
+}
+
+function addLabel(label, x, y, kind = '', important = false) {
+  if (!label || label.length < 2) return;
+  const duplicate = map.labels.some(item => item.label === label && Math.hypot(item.x - x, item.y - y) < 42);
+  if (!duplicate) map.labels.push({ label, x, y, kind, important });
+}
+
+function buildOverpassQuery() {
+  const bbox = `${BOUNDS.south},${BOUNDS.west},${BOUNDS.north},${BOUNDS.east}`;
+  return `
+    [out:json][timeout:28];
+    (
+      way["highway"](${bbox});
+      way["railway"](${bbox});
+      way["building"](${bbox});
+      relation["building"](${bbox});
+      node["shop"](${bbox}); way["shop"](${bbox});
+      node["amenity"](${bbox}); way["amenity"](${bbox});
+      node["office"](${bbox}); way["office"](${bbox});
+      node["tourism"](${bbox}); way["tourism"](${bbox});
+      node["healthcare"](${bbox}); way["healthcare"](${bbox});
+      node["craft"](${bbox}); way["craft"](${bbox});
+      node["leisure"](${bbox}); way["leisure"](${bbox});
+    );
+    out body center;
+    >;
+    out skel qt;
+  `;
+}
+
+async function fetchOSM() {
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter'
   ];
-  return samples.some(point => {
-    const closest = nearestRoad(point.x, point.y);
-    return closest.road && closest.distance <= closest.road.width / 2 + padding;
-  });
+  const body = buildOverpassQuery();
+  for (const endpoint of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 18000);
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: new URLSearchParams({ data: body }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!response.ok) throw new Error(`OpenStreetMap endpoint returned ${response.status}`);
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('json')) throw new Error('OpenStreetMap endpoint did not return JSON');
+      return response.json();
+    } catch (error) {
+      console.warn('OpenStreetMap endpoint unavailable', endpoint, error);
+    }
+  }
+  return fetchOSMMapTiles();
 }
 
-function addBuilding(x, y, w, h, label = '') {
-  if (rectNearRoad({ x, y, w, h })) return;
-  buildings.push({ x, y, w, h, label, color: label ? '#cbb88d' : '#8c7460' });
-}
+async function fetchOSMMapTiles() {
+  const elements = new Map();
+  const cols = 3;
+  const rows = 2;
+  const requests = [];
 
-function buildCity() {
-  [
-    [1125, 770, 118, 82, 'MORRISONS'],
-    [1410, 785, 98, 72, 'GREGGS'],
-    [1135, 930, 96, 72, 'PHARMACY'],
-    [1395, 965, 96, 72, 'CAFE'],
-    [1220, 690, 82, 72, 'BANK'],
-    [1510, 610, 112, 84, 'STATION'],
-    [980, 930, 90, 74, 'BARBER'],
-    [1505, 930, 96, 74, 'NEWS'],
-    [1010, 1115, 104, 76, 'SHOPS'],
-    [1650, 730, 120, 82, 'OPTICIAN']
-  ].forEach(([x, y, w, h, label]) => buildings.push({ x, y, w, h, label, color: '#cbb88d' }));
-
-  [
-    [1080, 250], [930, 365], [730, 470], [520, 590],
-    [520, 1250], [700, 1410], [950, 1320], [1100, 1245],
-    [1520, 1110], [1660, 1200], [1810, 1370], [1980, 1480],
-    [1760, 620], [1940, 690], [2140, 600], [2320, 560],
-    [1040, 570], [880, 640], [700, 720], [560, 900]
-  ].forEach(([x, y], index) => addBuilding(x, y, 86 + rand(index) * 40, 72 + rand(index + 20) * 32, ''));
-
-  for (let i = 0; i < 90; i += 1) {
-    const x = 80 + rand(i) * (world.width - 160);
-    const y = 80 + rand(i + 100) * (world.height - 160);
-    if (!isOnRoad(x, y)) props.push({ x, y, r: 10 + rand(i + 200) * 8, type: 'tree' });
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const west = BOUNDS.west + ((BOUNDS.east - BOUNDS.west) * col) / cols;
+      const east = BOUNDS.west + ((BOUNDS.east - BOUNDS.west) * (col + 1)) / cols;
+      const south = BOUNDS.south + ((BOUNDS.north - BOUNDS.south) * row) / rows;
+      const north = BOUNDS.south + ((BOUNDS.north - BOUNDS.south) * (row + 1)) / rows;
+      requests.push(fetchOSMTile(west, south, east, north));
+    }
   }
 
-  traffic.push(
-    makeTrafficCar(roadPaths[0], 1, 90, '#2d74b8'),
-    makeTrafficCar(roadPaths[1], -1, 78, '#b83f2d'),
-    makeTrafficCar(roadPaths[3], 1, 82, '#d1d5db'),
-    makeTrafficCar(roadPaths[4], -1, 74, '#1f2937')
-  );
+  const tiles = await Promise.all(requests);
+  for (const tile of tiles) {
+    for (const element of tile) elements.set(`${element.type}/${element.id}`, element);
+  }
+
+  if (!elements.size) throw new Error('OpenStreetMap data is unavailable');
+  return { elements: [...elements.values()] };
+}
+
+async function fetchOSMTile(west, south, east, north) {
+  const url = `https://api.openstreetmap.org/api/0.6/map?bbox=${west},${south},${east},${north}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 22000);
+  const response = await fetch(url, { signal: controller.signal });
+  clearTimeout(timeout);
+  if (!response.ok) throw new Error(`OSM map tile returned ${response.status}`);
+
+  const xmlText = await response.text();
+  if (xmlText.includes('too many nodes')) throw new Error('OSM map tile is too large');
+
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('OSM map tile XML could not be parsed');
+
+  const elements = [];
+  for (const node of doc.querySelectorAll('node')) {
+    elements.push({
+      type: 'node',
+      id: Number(node.getAttribute('id')),
+      lat: Number(node.getAttribute('lat')),
+      lon: Number(node.getAttribute('lon')),
+      tags: readXMLTags(node)
+    });
+  }
+
+  for (const way of doc.querySelectorAll('way')) {
+    elements.push({
+      type: 'way',
+      id: Number(way.getAttribute('id')),
+      nodes: [...way.querySelectorAll('nd')].map(nd => Number(nd.getAttribute('ref'))),
+      tags: readXMLTags(way)
+    });
+  }
+
+  return elements;
+}
+
+function readXMLTags(element) {
+  const tags = {};
+  for (const tag of element.querySelectorAll('tag')) {
+    tags[tag.getAttribute('k')] = tag.getAttribute('v');
+  }
+  return tags;
+}
+
+function parseOSM(data) {
+  const nodes = new Map();
+  const ways = [];
+  map.roads = [];
+  map.rails = [];
+  map.buildings = [];
+  map.labels = [];
+
+  for (const item of data.elements) {
+    if (item.type === 'node') {
+      const point = project(item.lat, item.lon);
+      nodes.set(item.id, point);
+      if (isBusiness(item.tags)) addLabel(labelFromTags(item.tags), point.x, point.y, labelKind(item.tags), true);
+    } else if (item.type === 'way') {
+      ways.push(item);
+    }
+  }
+
+  for (const way of ways) {
+    const tags = way.tags || {};
+    const points = (way.nodes || []).map(id => nodes.get(id)).filter(Boolean);
+    if (points.length < 2) continue;
+
+    if (tags.highway) {
+      const foot = ['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(tags.highway);
+      map.roads.push({
+        points,
+        name: tags.name || '',
+        width: getRoadWidth(tags.highway),
+        main: ['primary', 'secondary', 'tertiary', 'trunk'].includes(tags.highway),
+        foot
+      });
+    }
+
+    if (tags.railway) map.rails.push({ points, name: tags.name || '' });
+  }
+
+  for (const way of ways) {
+    const tags = way.tags || {};
+    const points = (way.nodes || []).map(id => nodes.get(id)).filter(Boolean);
+    if (points.length < 3) continue;
+    const closed = way.nodes?.[0] === way.nodes?.[way.nodes.length - 1];
+    const centre = way.center ? project(way.center.lat, way.center.lon) : polygonCentroid(points);
+    const label = labelFromTags(tags);
+
+    if (tags.building && closed && !buildingOverlapsRoad(points)) {
+      map.buildings.push({
+        points,
+        label,
+        business: isBusiness(tags),
+        color: isBusiness(tags) ? '#c9b17d' : '#8d7964'
+      });
+    }
+
+    if (isBusiness(tags)) addLabel(label, centre.x, centre.y, labelKind(tags), true);
+  }
+
+  for (const road of map.roads) {
+    if (road.name && road.main) {
+      const point = road.points[Math.floor(road.points.length / 2)];
+      addLabel(road.name, point.x, point.y, 'road', false);
+    }
+  }
+
+  map.loaded = true;
+  map.source = `${map.roads.length} roads, ${map.buildings.length} buildings and ${map.labels.filter(label => label.important).length} named places from OpenStreetMap`;
+}
+
+function buildFallbackMap() {
+  const road = (name, width, main, coords) => ({
+    name,
+    width,
+    main,
+    foot: false,
+    points: coords.map(([lat, lon]) => project(lat, lon))
+  });
+  map.roads = [
+    road('Busby Road', 46, true, [[55.7994, -4.2788], [55.7925, -4.2776], [55.7857, -4.2764], [55.7800, -4.2762]]),
+    road('Clarkston Road', 40, true, [[55.7857, -4.2764], [55.7899, -4.2854], [55.7939, -4.2935]]),
+    road('Mearns Road', 38, true, [[55.7857, -4.2764], [55.7834, -4.2842], [55.7812, -4.2944]]),
+    road('Eastwoodmains Road', 40, true, [[55.7857, -4.2764], [55.7866, -4.2672], [55.7876, -4.2578]]),
+    road('Eaglesham Road', 36, true, [[55.7857, -4.2764], [55.7826, -4.2702], [55.7792, -4.2631]]),
+    road('Sheddens Road', 30, false, [[55.7857, -4.2764], [55.7864, -4.2848], [55.7868, -4.2920]]),
+    road('Flenders Road', 28, false, [[55.7835, -4.2852], [55.7791, -4.2920]]),
+    road('Seres Road', 26, false, [[55.7907, -4.2765], [55.7910, -4.2870]])
+  ];
+  map.rails = [{ points: [[55.7990, -4.2690], [55.7915, -4.2660], [55.7820, -4.2640]].map(([lat, lon]) => project(lat, lon)) }];
+  map.buildings = [];
+  map.labels = [];
+  for (const roadItem of map.roads) {
+    const point = roadItem.points[Math.floor(roadItem.points.length / 2)];
+    addLabel(roadItem.name, point.x, point.y, 'road', false);
+  }
+  map.source = 'Fallback Clarkston map. OpenStreetMap live data could not be loaded.';
+}
+
+function createParkedVehicles() {
+  vehicles = [];
+  const start = project(55.7842, -4.2763);
+  vehicles.push(createVehicle(start.x, start.y, -Math.PI / 2, '#3f7f3f', '4x4 Jeep', true));
+
+  let made = 0;
+  for (const road of map.roads.filter(item => !item.foot && item.width > 24)) {
+    for (let i = 0; i < road.points.length - 1 && made < 34; i += 1) {
+      const a = road.points[i];
+      const b = road.points[i + 1];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (length < 130) continue;
+      const dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+      const normal = { x: -dir.y, y: dir.x };
+      for (let d = 70; d < length - 40 && made < 34; d += 210) {
+        const side = made % 2 === 0 ? 1 : -1;
+        const x = a.x + dir.x * d + normal.x * side * (road.width / 2 + 18);
+        const y = a.y + dir.y * d + normal.y * side * (road.width / 2 + 18);
+        if (collidesWithBuilding(x, y)) continue;
+        vehicles.push(createVehicle(x, y, Math.atan2(dir.y, dir.x), made % 5 === 0 ? '#2d74b8' : '#8f3f2d', made % 5 === 0 ? 'Estate Car' : 'Parked Car', false));
+        made += 1;
+      }
+    }
+  }
+
+  activeVehicle = vehicles[0];
+  mode = 'driving';
+  resetRace(false);
+}
+
+function createVehicle(x, y, angle, color, name, playerOwned) {
+  return {
+    x,
+    y,
+    angle,
+    color,
+    name,
+    playerOwned,
+    speed: 0,
+    width: playerOwned ? 42 : 38,
+    length: playerOwned ? 68 : 58,
+    maxSpeed: playerOwned ? 540 : 430,
+    reverseSpeed: -190,
+    acceleration: playerOwned ? 420 : 360,
+    brakePower: 520,
+    drag: 0.965,
+    turnRate: playerOwned ? 2.7 : 2.45
+  };
+}
+
+function resetRace(resetCar = false) {
+  currentCheckpoint = 0;
+  raceStarted = false;
+  raceFinished = false;
+  elapsed = 0;
+  timerEl.textContent = formatTime(null);
+  missionEl.textContent = 'Drive through the green marker. Press E to get out or enter nearby cars.';
+  statusEl.textContent = map.source;
+  if (resetCar && vehicles[0]) {
+    const start = project(55.7842, -4.2763);
+    Object.assign(vehicles[0], { x: start.x, y: start.y, angle: -Math.PI / 2, speed: 0 });
+    activeVehicle = vehicles[0];
+    mode = 'driving';
+  }
 }
 
 function formatTime(seconds) {
@@ -185,107 +490,90 @@ function saveBest(time) {
   return false;
 }
 
-function makeTrafficCar(road, direction, speed, color) {
-  const segmentIndex = direction > 0 ? 0 : road.points.length - 1;
-  const point = road.points[segmentIndex];
-  return { x: point.x, y: point.y, angle: 0, speed, road, direction, segmentIndex, color };
-}
-
-function resetRace(resetCar = false) {
-  currentCheckpoint = 0;
-  raceStarted = false;
-  raceFinished = false;
-  elapsed = 0;
-  timerEl.textContent = formatTime(null);
-  missionEl.textContent = 'Drive the 4x4 through the green start marker.';
-  statusEl.textContent = 'Top-down sprint ready.';
-
-  if (resetCar) {
-    jeep.x = 1300;
-    jeep.y = 1180;
-    jeep.angle = -Math.PI / 2;
-    jeep.speed = 0;
-  }
-}
-
-function getJeepBounds(x = jeep.x, y = jeep.y) {
-  return {
-    x: x - jeep.width * 0.45,
-    y: y - jeep.length * 0.45,
-    w: jeep.width * 0.9,
-    h: jeep.length * 0.9
-  };
-}
-
-function collidesWithWorld(x, y) {
-  const bounds = getJeepBounds(x, y);
-  if (x < 40 || y < 40 || x > world.width - 40 || y > world.height - 40) return true;
-  if (!isOnRoad(x, y)) return true;
-  return buildings.some(building => rectsOverlap(bounds, building));
-}
-
-function updateJeep(delta) {
+function updateVehicle(vehicle, delta) {
   const throttle = input.down('w', 'arrowup');
   const brake = input.down('s', 'arrowdown');
   const steer = input.axis('a', 'd') + input.axis('arrowleft', 'arrowright');
   const boost = input.down('shift');
 
-  if (throttle) jeep.speed += jeep.acceleration * (boost ? 1.35 : 1) * delta;
-  if (brake) jeep.speed -= jeep.brakePower * delta;
-  if (!throttle && !brake) jeep.speed *= Math.pow(jeep.drag, delta * 60);
+  if (throttle) vehicle.speed += vehicle.acceleration * (boost ? 1.35 : 1) * delta;
+  if (brake) vehicle.speed -= vehicle.brakePower * delta;
+  if (!throttle && !brake) vehicle.speed *= Math.pow(vehicle.drag, delta * 60);
 
-  jeep.speed = Math.max(jeep.reverseSpeed, Math.min(jeep.speed, boost ? jeep.maxSpeed * 1.2 : jeep.maxSpeed));
+  vehicle.speed = Math.max(vehicle.reverseSpeed, Math.min(vehicle.speed, boost ? vehicle.maxSpeed * 1.15 : vehicle.maxSpeed));
+  const turnStrength = Math.min(1, Math.abs(vehicle.speed) / 160);
+  vehicle.angle += steer * vehicle.turnRate * turnStrength * Math.sign(vehicle.speed || 1) * delta;
 
-  const turnStrength = Math.min(1, Math.abs(jeep.speed) / 180);
-  jeep.angle += steer * jeep.turnRate * turnStrength * Math.sign(jeep.speed || 1) * delta;
-
-  const nextX = jeep.x + Math.cos(jeep.angle) * jeep.speed * delta;
-  const nextY = jeep.y + Math.sin(jeep.angle) * jeep.speed * delta;
-
-  if (collidesWithWorld(nextX, nextY)) {
-    jeep.speed *= -0.28;
+  const nextX = vehicle.x + Math.cos(vehicle.angle) * vehicle.speed * delta;
+  const nextY = vehicle.y + Math.sin(vehicle.angle) * vehicle.speed * delta;
+  if (!isOnRoad(nextX, nextY) || collidesWithBuilding(nextX, nextY)) {
+    vehicle.speed *= -0.25;
     return;
   }
-
-  jeep.x = nextX;
-  jeep.y = nextY;
+  vehicle.x = nextX;
+  vehicle.y = nextY;
 }
 
-function updateTraffic(delta) {
-  for (const car of traffic) {
-    const targetIndex = car.segmentIndex + car.direction;
-    const target = car.road.points[targetIndex];
-    if (!target) {
-      car.direction *= -1;
-      car.segmentIndex += car.direction;
-      continue;
-    }
-
-    const dx = target.x - car.x;
-    const dy = target.y - car.y;
-    const distance = Math.hypot(dx, dy);
-    car.angle = Math.atan2(dy, dx);
-
-    if (distance < 8) {
-      car.segmentIndex = targetIndex;
-    } else {
-      const step = Math.min(distance, car.speed * delta);
-      car.x += (dx / distance) * step;
-      car.y += (dy / distance) * step;
-    }
-
-    if (Math.hypot(car.x - jeep.x, car.y - jeep.y) < 48) {
-      jeep.speed *= -0.35;
+function updateWalker(delta) {
+  const xAxis = input.axis('a', 'd') + input.axis('arrowleft', 'arrowright');
+  const yAxis = input.axis('w', 's') + input.axis('arrowup', 'arrowdown');
+  const length = Math.hypot(xAxis, yAxis);
+  const speed = input.down('shift') ? 210 : 125;
+  if (length > 0) {
+    const dx = (xAxis / length) * speed * delta;
+    const dy = (yAxis / length) * speed * delta;
+    const nextX = player.x + dx;
+    const nextY = player.y + dy;
+    player.angle = Math.atan2(dy, dx);
+    if (!collidesWithBuilding(nextX, nextY)) {
+      player.x = Math.max(24, Math.min(world.width - 24, nextX));
+      player.y = Math.max(24, Math.min(world.height - 24, nextY));
     }
   }
+}
+
+function exitVehicle() {
+  if (!activeVehicle) return;
+  activeVehicle.speed = 0;
+  player.x = activeVehicle.x - Math.sin(activeVehicle.angle) * 34;
+  player.y = activeVehicle.y + Math.cos(activeVehicle.angle) * 34;
+  player.angle = activeVehicle.angle;
+  activeVehicle = null;
+  mode = 'walking';
+  missionEl.textContent = 'On foot. Walk to a parked car and press E to get in.';
+}
+
+function enterNearestVehicle() {
+  let nearest = null;
+  let best = Infinity;
+  for (const vehicle of vehicles) {
+    const distance = Math.hypot(player.x - vehicle.x, player.y - vehicle.y);
+    if (distance < best) {
+      nearest = vehicle;
+      best = distance;
+    }
+  }
+  if (nearest && best < 72) {
+    activeVehicle = nearest;
+    activeVehicle.speed = 0;
+    mode = 'driving';
+    missionEl.textContent = `Driving ${nearest.name}. Press E to get out.`;
+  } else {
+    missionEl.textContent = 'Move closer to a parked car, then press E.';
+  }
+}
+
+function updateModeSwitch() {
+  if (!input.justPressed('e')) return;
+  if (mode === 'driving') exitVehicle();
+  else enterNearestVehicle();
 }
 
 function updateRace() {
-  if (raceFinished) return;
-
+  if (raceFinished || mode !== 'driving' || !activeVehicle) return;
   const checkpoint = checkpoints[currentCheckpoint];
-  const distance = Math.hypot(jeep.x - checkpoint.x, jeep.y - checkpoint.y);
-  if (distance > 58) return;
+  const distance = Math.hypot(activeVehicle.x - checkpoint.x, activeVehicle.y - checkpoint.y);
+  if (distance > 68) return;
 
   if (currentCheckpoint === 0) {
     raceStarted = true;
@@ -301,7 +589,7 @@ function updateRace() {
     raceStarted = false;
     const newBest = saveBest(elapsed);
     bestEl.textContent = formatTime(readBest());
-    missionEl.textContent = newBest ? 'New best time. Space to restart.' : 'Finished. Space to restart.';
+    missionEl.textContent = newBest ? 'New best time. Press Space to restart.' : 'Finished. Press Space to restart.';
     statusEl.textContent = `Finished in ${formatTime(elapsed)}.`;
     return;
   }
@@ -310,176 +598,170 @@ function updateRace() {
 }
 
 function updateCamera() {
+  const target = mode === 'driving' && activeVehicle ? activeVehicle : player;
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
-  camera.x += (jeep.x - viewW / 2 - camera.x) * 0.14;
-  camera.y += (jeep.y - viewH / 2 - camera.y) * 0.14;
+  camera.x += (target.x - viewW / 2 - camera.x) * 0.14;
+  camera.y += (target.y - viewH / 2 - camera.y) * 0.14;
   camera.x = Math.max(0, Math.min(camera.x, world.width - viewW));
   camera.y = Math.max(0, Math.min(camera.y, world.height - viewH));
 }
 
-function drawWorld() {
+function drawMap() {
   ctx.fillStyle = '#5f8f62';
   ctx.fillRect(0, 0, world.width, world.height);
 
-  ctx.fillStyle = '#4d7c55';
-  for (let i = 0; i < 45; i += 1) {
+  for (let i = 0; i < 90; i += 1) {
+    ctx.fillStyle = i % 2 ? '#568a5b' : '#4e8057';
     ctx.beginPath();
-    ctx.arc(70 + rand(i) * world.width, 60 + rand(i + 50) * world.height, 35 + rand(i + 80) * 70, 0, Math.PI * 2);
+    ctx.arc(80 + rand(i) * (world.width - 160), 80 + rand(i + 60) * (world.height - 160), 20 + rand(i + 20) * 48, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  ctx.strokeStyle = '#1d2126';
-  ctx.lineWidth = 9;
-  ctx.beginPath();
-  ctx.moveTo(1730, 80);
-  ctx.bezierCurveTo(1760, 520, 1690, 970, 1760, 1720);
-  ctx.stroke();
-  ctx.strokeStyle = '#bfc4ca';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(1714, 80);
-  ctx.bezierCurveTo(1744, 520, 1674, 970, 1744, 1720);
-  ctx.moveTo(1746, 80);
-  ctx.bezierCurveTo(1776, 520, 1706, 970, 1776, 1720);
-  ctx.stroke();
+  for (const rail of map.rails) drawPolyline(rail.points, '#1d2126', 8, false);
+  for (const rail of map.rails) drawPolyline(rail.points, '#bfc4ca', 3, true, [18, 18]);
 
-  for (const road of roadPaths) {
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#b8b4a9';
-    ctx.lineWidth = road.width + 26;
-    ctx.beginPath();
-    road.points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
-    ctx.stroke();
-
-    ctx.strokeStyle = road.main ? '#292f35' : '#343a40';
-    ctx.lineWidth = road.width;
-    ctx.beginPath();
-    road.points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
-    ctx.stroke();
-
-    ctx.strokeStyle = road.main ? '#e8e2ce' : '#aeb6bf';
-    ctx.setLineDash(road.main ? [28, 30] : [18, 26]);
-    ctx.lineWidth = road.main ? 5 : 3;
-    ctx.beginPath();
-    road.points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
-    ctx.stroke();
-    ctx.setLineDash([]);
+  for (const road of map.roads.filter(item => !item.foot)) {
+    drawPolyline(road.points, '#b8b4a9', road.width + 18, false);
+    drawPolyline(road.points, road.main ? '#292f35' : '#343a40', road.width, false);
+    drawPolyline(road.points, road.main ? '#e8e2ce' : '#aeb6bf', road.main ? 4 : 2, true, road.main ? [26, 30] : [14, 24]);
   }
-  ctx.lineCap = 'butt';
+  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, '#bbb6aa', road.width, false);
 
-  ctx.fillStyle = '#292f35';
+  for (const building of map.buildings) drawBuilding(building);
+  drawLabels();
+}
+
+function drawPolyline(points, color, width, dashed, dash = []) {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (dashed) ctx.setLineDash(dash);
   ctx.beginPath();
-  ctx.arc(toll.x, toll.y, toll.radius, 0, Math.PI * 2);
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBuilding(building) {
+  ctx.save();
+  ctx.fillStyle = '#403832';
+  ctx.translate(5, 6);
+  drawPolygon(building.points);
   ctx.fill();
-  ctx.strokeStyle = '#e8e2ce';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.arc(toll.x, toll.y, toll.radius - 20, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = '#3f7c4d';
-  ctx.beginPath();
-  ctx.arc(toll.x, toll.y, 34, 0, Math.PI * 2);
+  ctx.restore();
+
+  ctx.fillStyle = building.color;
+  drawPolygon(building.points);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(20, 26, 32, .55)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
 
-  for (const building of buildings) {
-    ctx.fillStyle = '#443b35';
-    ctx.fillRect(building.x + 8, building.y + 8, building.w, building.h);
-    ctx.fillStyle = building.color;
-    ctx.fillRect(building.x, building.y, building.w, building.h);
-    ctx.fillStyle = '#2b3440';
-    ctx.fillRect(building.x + 10, building.y + 12, building.w - 20, 10);
-    if (building.label) {
-      ctx.fillStyle = '#111827';
-      ctx.fillRect(building.x + 8, building.y + building.h - 28, building.w - 16, 20);
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 12px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(building.label, building.x + building.w / 2, building.y + building.h - 13);
-    }
-  }
+function drawPolygon(points) {
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.closePath();
+}
 
-  ctx.fillStyle = '#f8fafc';
-  ctx.font = 'bold 30px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Clarkston Toll', toll.x, toll.y - 118);
-  ctx.font = 'bold 18px system-ui, sans-serif';
-  for (const road of roadPaths.filter(path => path.main)) {
-    const point = road.points[Math.floor(road.points.length / 2)];
-    ctx.fillText(road.name, point.x, point.y - 18);
-  }
+function drawLabels() {
+  const visible = {
+    left: camera.x - 60,
+    right: camera.x + window.innerWidth + 60,
+    top: camera.y - 60,
+    bottom: camera.y + window.innerHeight + 60
+  };
+  const labels = map.labels
+    .filter(item => item.x > visible.left && item.x < visible.right && item.y > visible.top && item.y < visible.bottom)
+    .sort((a, b) => Number(a.important) - Number(b.important));
 
-  for (const prop of props) {
-    ctx.fillStyle = '#315f32';
-    ctx.beginPath();
-    ctx.arc(prop.x + 4, prop.y + 5, prop.r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#5a3924';
-    ctx.fillRect(prop.x - 3, prop.y - 3, 6, 8);
-    ctx.fillStyle = '#2f8a42';
-    ctx.beginPath();
-    ctx.arc(prop.x, prop.y, prop.r, 0, Math.PI * 2);
-    ctx.fill();
+  for (const item of labels.slice(-80)) {
+    const important = item.important;
+    ctx.font = important ? 'bold 13px system-ui, sans-serif' : 'bold 16px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const width = Math.min(180, ctx.measureText(item.label).width + 16);
+    ctx.fillStyle = important ? 'rgba(12, 18, 24, .78)' : 'rgba(248, 250, 252, .86)';
+    ctx.fillRect(item.x - width / 2, item.y - 24, width, 20);
+    ctx.fillStyle = important ? '#ffffff' : '#172033';
+    ctx.fillText(item.label, item.x, item.y - 10);
   }
 }
 
 function drawCheckpoint(checkpoint, index) {
+  if (raceFinished && index >= currentCheckpoint) return;
   const active = index === currentCheckpoint;
-  const cleared = index < currentCheckpoint;
   ctx.save();
   ctx.translate(checkpoint.x, checkpoint.y);
-  ctx.strokeStyle = active ? '#45ff7b' : cleared ? '#7c8795' : '#334155';
-  ctx.fillStyle = active ? 'rgba(69, 255, 123, 0.18)' : 'rgba(148, 163, 184, 0.12)';
+  ctx.strokeStyle = active ? '#45ff7b' : '#94a3b8';
+  ctx.fillStyle = active ? 'rgba(69, 255, 123, 0.18)' : 'rgba(148, 163, 184, 0.10)';
   ctx.lineWidth = active ? 7 : 4;
   ctx.beginPath();
-  ctx.arc(0, 0, 58, 0, Math.PI * 2);
+  ctx.arc(0, 0, 66, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = active ? '#f8fafc' : '#cbd5e1';
+  ctx.fillStyle = '#f8fafc';
   ctx.font = 'bold 18px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(`${index + 1}`, 0, 6);
   ctx.restore();
 }
 
-function drawVehicle(x, y, angle, color, scale = 1, isJeep = false) {
+function drawVehicle(vehicle, isActive) {
   ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle + Math.PI / 2);
-  ctx.scale(scale, scale);
+  ctx.translate(vehicle.x, vehicle.y);
+  ctx.rotate(vehicle.angle + Math.PI / 2);
 
   ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.fillRect(-23, -31, 46, 70);
-
-  ctx.fillStyle = color;
-  ctx.fillRect(-21, -34, 42, 68);
-  ctx.fillStyle = isJeep ? '#1f3d2d' : '#111827';
-  ctx.fillRect(-15, -18, 30, 26);
+  ctx.fillRect(-vehicle.width / 2 - 3, -vehicle.length / 2 + 4, vehicle.width + 6, vehicle.length + 4);
+  ctx.fillStyle = vehicle.color;
+  ctx.fillRect(-vehicle.width / 2, -vehicle.length / 2, vehicle.width, vehicle.length);
+  ctx.fillStyle = vehicle.playerOwned ? '#1f3d2d' : '#111827';
+  ctx.fillRect(-vehicle.width * 0.34, -vehicle.length * 0.22, vehicle.width * 0.68, vehicle.length * 0.34);
   ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(-13, -31, 26, 11);
+  ctx.fillRect(-vehicle.width * 0.31, -vehicle.length * 0.43, vehicle.width * 0.62, vehicle.length * 0.16);
   ctx.fillStyle = '#111827';
-  ctx.fillRect(-27, -27, 8, 16);
-  ctx.fillRect(19, -27, 8, 16);
-  ctx.fillRect(-27, 13, 8, 16);
-  ctx.fillRect(19, 13, 8, 16);
+  ctx.fillRect(-vehicle.width / 2 - 5, -vehicle.length * 0.35, 8, 15);
+  ctx.fillRect(vehicle.width / 2 - 3, -vehicle.length * 0.35, 8, 15);
+  ctx.fillRect(-vehicle.width / 2 - 5, vehicle.length * 0.18, 8, 15);
+  ctx.fillRect(vehicle.width / 2 - 3, vehicle.length * 0.18, 8, 15);
 
-  if (isJeep) {
+  if (vehicle.playerOwned) {
     ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(-18, 25, 36, 5);
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(-10, 34, 20, 10);
+    ctx.fillRect(-vehicle.width * 0.42, vehicle.length * 0.35, vehicle.width * 0.84, 5);
   }
 
+  if (isActive) {
+    ctx.strokeStyle = '#45ff7b';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-vehicle.width / 2 - 5, -vehicle.length / 2 - 5, vehicle.width + 10, vehicle.length + 10);
+  }
+  ctx.restore();
+}
+
+function drawPlayer() {
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(player.angle + Math.PI / 2);
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
+  ctx.beginPath();
+  ctx.arc(3, 4, player.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2563eb';
+  ctx.beginPath();
+  ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(-4, -player.radius - 3, 8, 8);
   ctx.restore();
 }
 
@@ -487,12 +769,10 @@ function drawScene() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.save();
   ctx.translate(-camera.x, -camera.y);
-
-  drawWorld();
+  drawMap();
   checkpoints.forEach(drawCheckpoint);
-  for (const car of traffic) drawVehicle(car.x, car.y, car.angle, car.color, 0.72);
-  drawVehicle(jeep.x, jeep.y, jeep.angle, '#3f7f3f', 1, true);
-
+  for (const vehicle of vehicles) drawVehicle(vehicle, vehicle === activeVehicle);
+  if (mode === 'walking') drawPlayer();
   ctx.restore();
 }
 
@@ -506,11 +786,10 @@ function drawMiniMap() {
 
   const sx = w / world.width;
   const sy = h / world.height;
-  for (const road of roadPaths) {
+  for (const road of map.roads.filter(item => !item.foot)) {
     miniCtx.strokeStyle = '#46515c';
-    miniCtx.lineWidth = Math.max(3, road.width * sx);
+    miniCtx.lineWidth = Math.max(2, road.width * sx);
     miniCtx.lineCap = 'round';
-    miniCtx.lineJoin = 'round';
     miniCtx.beginPath();
     road.points.forEach((point, index) => {
       if (index === 0) miniCtx.moveTo(point.x * sx, point.y * sy);
@@ -519,11 +798,6 @@ function drawMiniMap() {
     miniCtx.stroke();
   }
 
-  miniCtx.fillStyle = '#53606b';
-  miniCtx.beginPath();
-  miniCtx.arc(toll.x * sx, toll.y * sy, toll.radius * sx, 0, Math.PI * 2);
-  miniCtx.fill();
-
   checkpoints.forEach((checkpoint, index) => {
     miniCtx.fillStyle = index === currentCheckpoint ? '#45ff7b' : '#94a3b8';
     miniCtx.beginPath();
@@ -531,9 +805,10 @@ function drawMiniMap() {
     miniCtx.fill();
   });
 
-  miniCtx.fillStyle = '#f87171';
+  const target = mode === 'driving' && activeVehicle ? activeVehicle : player;
+  miniCtx.fillStyle = mode === 'driving' ? '#f87171' : '#60a5fa';
   miniCtx.beginPath();
-  miniCtx.arc(jeep.x * sx, jeep.y * sy, 5, 0, Math.PI * 2);
+  miniCtx.arc(target.x * sx, target.y * sy, 5, 0, Math.PI * 2);
   miniCtx.fill();
 }
 
@@ -541,11 +816,11 @@ function tick(now) {
   const delta = Math.min((now - lastTime) / 1000, 0.033);
   lastTime = now;
 
-  if (input.justPressed('r')) resetRace(true);
-  if (input.justPressed(' ')) resetRace(true);
+  if (input.justPressed('r') || input.justPressed(' ')) resetRace(true);
+  updateModeSwitch();
 
-  updateJeep(delta);
-  updateTraffic(delta);
+  if (mode === 'driving' && activeVehicle) updateVehicle(activeVehicle, delta);
+  if (mode === 'walking') updateWalker(delta);
   updateRace();
   updateCamera();
 
@@ -554,9 +829,11 @@ function tick(now) {
     timerEl.textContent = formatTime(elapsed);
   }
 
-  speedEl.textContent = Math.round(Math.abs(jeep.speed) / 7.2);
-  modeEl.textContent = '4x4 Jeep';
-  areaEl.textContent = isOnRoad(jeep.x, jeep.y) ? 'Clarkston Streets' : 'Off road';
+  const target = mode === 'driving' && activeVehicle ? activeVehicle : player;
+  speedEl.textContent = mode === 'driving' && activeVehicle ? Math.round(Math.abs(activeVehicle.speed) / 7.2) : 0;
+  modeEl.textContent = mode === 'driving' && activeVehicle ? activeVehicle.name : 'On foot';
+  const nearest = nearestRoad(target.x, target.y);
+  areaEl.textContent = nearest.road?.name || 'Clarkston';
 
   drawScene();
   drawMiniMap();
@@ -564,9 +841,20 @@ function tick(now) {
   requestAnimationFrame(tick);
 }
 
-buildCity();
-resize();
-bestEl.textContent = formatTime(readBest());
-resetRace(true);
+async function boot() {
+  resize();
+  bestEl.textContent = formatTime(readBest());
+  statusEl.textContent = 'Loading current Clarkston map data...';
+  try {
+    parseOSM(await fetchOSM());
+  } catch (error) {
+    console.warn(error);
+    buildFallbackMap();
+  }
+  createParkedVehicles();
+  statusEl.textContent = map.source;
+  requestAnimationFrame(tick);
+}
+
 window.addEventListener('resize', resize);
-requestAnimationFrame(tick);
+boot();
