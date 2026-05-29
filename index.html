@@ -44,14 +44,23 @@
   <script>
     (() => {
       const originalFetch = window.fetch.bind(window);
-      const copiedMapUrl = 'https://raw.githubusercontent.com/hatch-sse/clarkston/main/data/clarkston-osm.json?v=20260529';
-      window.fetch = (input, init) => {
+      const copiedMapBlobUrl = 'https://api.github.com/repos/hatch-sse/clarkston/git/blobs/ab4950ff87343ea0095e9aaceea8c2322ec53d5a';
+      window.fetch = async (input, init) => {
         const url = typeof input === 'string' ? input : input?.url || '';
-        if (url.includes('data/clarkston-osm.json')) return originalFetch(copiedMapUrl, init);
-        return originalFetch(input, init);
+        if (!url.includes('data/clarkston-osm.json')) return originalFetch(input, init);
+
+        const response = await originalFetch(copiedMapBlobUrl, { cache: 'force-cache' });
+        if (!response.ok) return response;
+
+        const blob = await response.json();
+        const json = atob(String(blob.content || '').replace(/\s/g, ''));
+        return new Response(json, {
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' }
+        });
       };
     })();
   </script>
-  <script type="module" src="src/main.js?v=18"></script>
+  <script type="module" src="src/main.js?v=19"></script>
 </body>
 </html>
