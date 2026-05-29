@@ -41,26 +41,64 @@
   <canvas id="minimap" width="220" height="220"></canvas>
   <canvas id="game"></canvas>
 
-  <script>
-    (() => {
-      const originalFetch = window.fetch.bind(window);
-      const copiedMapBlobUrl = 'https://api.github.com/repos/hatch-sse/clarkston/git/blobs/ab4950ff87343ea0095e9aaceea8c2322ec53d5a';
-      window.fetch = async (input, init) => {
-        const url = typeof input === 'string' ? input : input?.url || '';
-        if (!url.includes('data/clarkston-osm.json')) return originalFetch(input, init);
+  <script type="module">
+    import { CLARKSTON_ROAD_ROWS } from './src/data/clarkstonRoads.js?v=20260529b';
 
-        const response = await originalFetch(copiedMapBlobUrl, { cache: 'force-cache' });
-        if (!response.ok) return response;
+    const originalFetch = window.fetch.bind(window);
+    const bounds = { south: 55.7785, west: -4.3025, north: 55.8008, east: -4.2460 };
+    const metres = 111320;
+    const midLat = (bounds.south + bounds.north) / 2;
+    const scale = 1.34;
+    const padding = 220;
+    const lonScale = metres * Math.cos(midLat * Math.PI / 180) * scale;
+    const latScale = metres * scale;
 
-        const blob = await response.json();
-        const json = atob(String(blob.content || '').replace(/\s/g, ''));
-        return new Response(json, {
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' }
-        });
+    function pointToNode(id, point) {
+      return {
+        type: 'node',
+        id,
+        lat: bounds.north - ((point[1] - padding) / latScale),
+        lon: bounds.west + ((point[0] - padding) / lonScale)
       };
-    })();
+    }
+
+    function roadSnapshot() {
+      const elements = [];
+      let nodeId = -1;
+      let wayId = -1;
+      for (const row of CLARKSTON_ROAD_ROWS.split(';')) {
+        const [name, highway, pointText] = row.split('|');
+        if (!highway || !pointText) continue;
+        const nodeRefs = [];
+        for (const pair of pointText.split(' ')) {
+          const [x, y] = pair.split(',').map(Number);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+          elements.push(pointToNode(nodeId, [x, y]));
+          nodeRefs.push(nodeId);
+          nodeId -= 1;
+        }
+        if (nodeRefs.length > 1) {
+          elements.push({
+            type: 'way',
+            id: wayId,
+            nodes: nodeRefs,
+            tags: { highway, name: name || '' }
+          });
+          wayId -= 1;
+        }
+      }
+      return { elements };
+    }
+
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url || '';
+      if (!url.includes('data/clarkston-osm.json')) return originalFetch(input, init);
+      return new Response(JSON.stringify(roadSnapshot()), {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8' }
+      });
+    };
   </script>
-  <script type="module" src="src/main.js?v=19"></script>
+  <script type="module" src="src/main.js?v=20"></script>
 </body>
 </html>
