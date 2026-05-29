@@ -41,6 +41,17 @@
   <canvas id="minimap" width="220" height="220"></canvas>
   <canvas id="game"></canvas>
 
-  <script type="module" src="src/main.js?v=17"></script>
+  <script>
+    (() => {
+      const originalFetch = window.fetch.bind(window);
+      const copiedMapUrl = 'https://raw.githubusercontent.com/hatch-sse/clarkston/main/data/clarkston-osm.json?v=20260529';
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input?.url || '';
+        if (url.includes('data/clarkston-osm.json')) return originalFetch(copiedMapUrl, init);
+        return originalFetch(input, init);
+      };
+    })();
+  </script>
+  <script type="module" src="src/main.js?v=18"></script>
 </body>
 </html>
