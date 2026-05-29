@@ -314,7 +314,12 @@ function createVehicle(x, y, angle, typeIndex = 0, playerOwned = false) {
 function placeVehicles() {
   vehicles = [];
   const start = snapToRoad(2400, 2140);
-  vehicles.push(createVehicle(start.x, start.y, start.angle, 0, true));
+  activeVehicle = createVehicle(start.x, start.y, start.angle, 0, true);
+  vehicles.push(activeVehicle);
+  player.x = activeVehicle.x - Math.sin(activeVehicle.angle) * 26;
+  player.y = activeVehicle.y + Math.cos(activeVehicle.angle) * 26;
+  player.angle = activeVehicle.angle;
+  mode = 'driving';
   let made = 0;
   for (const road of map.roads.filter(r => !r.foot && r.width >= 30)) for (let i = 0; i < road.points.length - 1 && made < 56; i++) {
     const a = road.points[i], b = road.points[i + 1], length = Math.hypot(b.x - a.x, b.y - a.y);
@@ -506,6 +511,20 @@ function drawScene() {
   ctx.restore();
 }
 function resetRace() { checkpointIndex=0; raceStarted=false; missionEl.textContent='Drive through the green marker. Press E to get out or enter nearby cars.'; }
+function resetPlayerCar() {
+  const start = snapToRoad(2400, 2140);
+  let jeep = vehicles.find(v => v.playerOwned);
+  if (!jeep) {
+    jeep = createVehicle(start.x, start.y, start.angle, 0, true);
+    vehicles.unshift(jeep);
+  }
+  Object.assign(jeep, { x: start.x, y: start.y, angle: start.angle, speed: 0, grip: 1 });
+  activeVehicle = jeep;
+  mode = 'driving';
+  camera.x = Math.max(0, jeep.x - window.innerWidth / camera.zoom / 2);
+  camera.y = Math.max(0, jeep.y - window.innerHeight / camera.zoom / 2);
+  resetRace();
+}
 function updateTrains(delta) { for (const train of trains) train.progress += train.speed * delta; }
 function setupTrains() {
   trains.length = 0;
@@ -543,7 +562,7 @@ function updateAudio(delta) {
 function tick(now) {
   const delta=Math.min((now-lastTime)/1000,.033); lastTime=now;
   if (input.down('w','a','s','d','arrowup','arrowdown','arrowleft','arrowright',' ')) startAudio();
-  if (input.justPressed('r')) resetRace();
+  if (input.justPressed('r')) resetPlayerCar();
   updateModeSwitch(); if (mode==='driving'&&activeVehicle) updateVehicle(activeVehicle,delta); if (mode==='walking') updateWalker(delta);
   updateRace(); updateCamera(); updateTrains(delta); updateAudio(delta);
   if (raceStarted) timerEl.textContent=`${((performance.now()-raceStart)/1000).toFixed(2)}s`;
