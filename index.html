@@ -42,7 +42,7 @@
   <canvas id="game"></canvas>
 
   <script type="module">
-    import { CLARKSTON_ROAD_ROWS } from './src/data/clarkstonRoads.js?v=20260529c';
+    import { CLARKSTON_ROAD_ROWS } from './src/data/clarkstonRoads.js?v=20260529d';
 
     const originalFetch = window.fetch.bind(window);
     const bounds = { south: 55.7785, west: -4.3025, north: 55.8008, east: -4.2460 };
@@ -52,6 +52,8 @@
     const padding = 220;
     const lonScale = metres * Math.cos(midLat * Math.PI / 180) * scale;
     const latScale = metres * scale;
+    const worldWidth = Math.round((bounds.east - bounds.west) * metres * Math.cos(midLat * Math.PI / 180) * scale + padding * 2);
+    const worldHeight = Math.round((bounds.north - bounds.south) * metres * scale + padding * 2);
 
     function pointToNode(id, point) {
       return {
@@ -62,20 +64,68 @@
       };
     }
 
+    function rand(seed) {
+      const value = Math.sin(seed * 928.13) * 10000;
+      return value - Math.floor(value);
+    }
+
+    function roadWidth(highway) {
+      if (highway === 'primary' || highway === 'secondary') return 46;
+      if (highway === 'tertiary' || highway === 'trunk') return 40;
+      if (highway === 'service') return 22;
+      return 31;
+    }
+
+    function orientedRect(cx, cy, angle, width, depth) {
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      const nx = -dy;
+      const ny = dx;
+      const hw = width / 2;
+      const hd = depth / 2;
+      return [
+        [cx - dx * hw - nx * hd, cy - dy * hw - ny * hd],
+        [cx + dx * hw - nx * hd, cy + dy * hw - ny * hd],
+        [cx + dx * hw + nx * hd, cy + dy * hw + ny * hd],
+        [cx - dx * hw + nx * hd, cy - dy * hw + ny * hd]
+      ];
+    }
+
     function roadSnapshot() {
       const elements = [];
+      const roadLines = [];
       let nodeId = -1;
       let wayId = -1;
+
+      function addNode(point) {
+        const id = nodeId;
+        elements.push(pointToNode(id, point));
+        nodeId -= 1;
+        return id;
+      }
+
+      function addBuilding(points) {
+        const nodes = points.map(point => addNode(point));
+        nodes.push(nodes[0]);
+        elements.push({
+          type: 'way',
+          id: wayId,
+          nodes,
+          tags: { building: 'house' }
+        });
+        wayId -= 1;
+      }
+
       for (const row of CLARKSTON_ROAD_ROWS.split(';')) {
         const [name, highway, pointText] = row.split('|');
         if (!highway || !pointText) continue;
+        const points = [];
         const nodeRefs = [];
         for (const pair of pointText.split(' ')) {
           const [x, y] = pair.split(',').map(Number);
           if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-          elements.push(pointToNode(nodeId, [x, y]));
-          nodeRefs.push(nodeId);
-          nodeId -= 1;
+          points.push([x, y]);
+          nodeRefs.push(addNode([x, y]));
         }
         if (nodeRefs.length > 1) {
           elements.push({
@@ -85,8 +135,46 @@
             tags: { highway, name: name || '' }
           });
           wayId -= 1;
+          if (!['primary', 'secondary', 'tertiary', 'trunk', 'footway', 'path', 'cycleway', 'steps'].includes(highway)) {
+            roadLines.push({ highway, points });
+          }
         }
       }
+
+      let buildings = 0;
+      for (let r = 0; r < roadLines.length && buildings < 340; r += 1) {
+        const road = roadLines[r];
+        const asphalt = roadWidth(road.highway);
+        for (let i = 0; i < road.points.length - 1 && buildings < 340; i += 1) {
+          const a = road.points[i];
+          const b = road.points[i + 1];
+          const dx = b[0] - a[0];
+          const dy = b[1] - a[1];
+          const length = Math.hypot(dx, dy);
+          if (length < 95) continue;
+          const ux = dx / length;
+          const uy = dy / length;
+          const nx = -uy;
+          const ny = ux;
+          const angle = Math.atan2(uy, ux);
+          for (let d = 42; d < length - 34 && buildings < 340; d += 104) {
+            for (const side of [-1, 1]) {
+              if (buildings >= 340) break;
+              const seed = r * 101 + i * 17 + buildings + Math.round(d);
+              const width = 20 + rand(seed) * 16;
+              const depth = 18 + rand(seed + 4) * 13;
+              const setback = asphalt / 2 + depth / 2 + 20 + rand(seed + 8) * 8;
+              const cx = a[0] + ux * d + nx * side * setback;
+              const cy = a[1] + uy * d + ny * side * setback;
+              const points = orientedRect(cx, cy, angle, width, depth);
+              if (points.some(([x, y]) => x < 32 || y < 32 || x > worldWidth - 32 || y > worldHeight - 32)) continue;
+              addBuilding(points);
+              buildings += 1;
+            }
+          }
+        }
+      }
+
       return { elements };
     }
 
@@ -99,6 +187,6 @@
       });
     };
   </script>
-  <script type="module" src="src/main.js?v=21"></script>
+  <script type="module" src="src/main.js?v=22"></script>
 </body>
 </html>
