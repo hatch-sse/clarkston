@@ -42,7 +42,7 @@
   <canvas id="game"></canvas>
 
   <script type="module">
-    import { CLARKSTON_ROAD_ROWS } from './src/data/clarkstonRoads.js?v=20260529d';
+    import { CLARKSTON_ROAD_ROWS } from './src/data/clarkstonRoads.js?v=20260529e';
 
     const originalFetch = window.fetch.bind(window);
     const bounds = { south: 55.7785, west: -4.3025, north: 55.8008, east: -4.2460 };
@@ -186,7 +186,8 @@
         headers: { 'content-type': 'application/json; charset=utf-8' }
       });
     };
+
+    await import('./src/main.js?v=23');
   </script>
-  <script type="module" src="src/main.js?v=22"></script>
 </body>
 </html>
