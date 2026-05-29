@@ -206,12 +206,12 @@ function collidesWithBuilding(x, y) {
 }
 
 function getRoadWidth(highway) {
-  if (['primary', 'secondary'].includes(highway)) return 58;
-  if (['tertiary', 'trunk'].includes(highway)) return 52;
-  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 42;
-  if (['service'].includes(highway)) return 30;
+  if (['primary', 'secondary'].includes(highway)) return 46;
+  if (['tertiary', 'trunk'].includes(highway)) return 40;
+  if (['residential', 'unclassified', 'living_street'].includes(highway)) return 31;
+  if (['service'].includes(highway)) return 22;
   if (['footway', 'path', 'cycleway', 'pedestrian', 'steps'].includes(highway)) return 5;
-  return 38;
+  return 30;
 }
 
 function labelFromTags(tags = {}) {
@@ -301,7 +301,7 @@ async function fetchOSM() {
 }
 
 async function fetchPackagedMap() {
-  const response = await fetch('data/clarkston-osm.json?v=20260528', { cache: 'force-cache' });
+  const response = await fetch('data/clarkston-osm.json?v=20260529', { cache: 'force-cache' });
   if (!response.ok) throw new Error(`Packaged Clarkston map returned ${response.status}`);
   return response.json();
 }
@@ -446,8 +446,71 @@ function parseOSM(data) {
     }
   }
 
+  if (!map.buildings.length && map.roads.length > 40) synthesizeRoadsideBuildings();
+
   map.loaded = true;
   map.source = `${map.roads.length} roads, ${map.buildings.length} buildings and ${map.labels.filter(label => label.important).length} named places from OpenStreetMap`;
+}
+
+function synthesizeRoadsideBuildings() {
+  let made = 0;
+  const roads = map.roads.filter(road => !road.foot && road.width <= 34);
+  for (let r = 0; r < roads.length && made < 900; r += 1) {
+    const road = roads[r];
+    for (let i = 0; i < road.points.length - 1 && made < 900; i += 1) {
+      const a = road.points[i];
+      const b = road.points[i + 1];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (length < 90) continue;
+      const dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+      const normal = { x: -dir.y, y: dir.x };
+      const angle = Math.atan2(dir.y, dir.x);
+      const spacing = road.width > 28 ? 100 : 72;
+
+      for (let d = 38; d < length - 28 && made < 900; d += spacing) {
+        for (const side of [-1, 1]) {
+          if (made >= 900) break;
+          const seed = made + r * 11 + i * 7 + Math.round(d);
+          const depth = 18 + rand(seed) * 14;
+          const width = 20 + rand(seed + 3) * 18;
+          const setback = road.width / 2 + depth / 2 + 18 + rand(seed + 6) * 10;
+          const cx = a.x + dir.x * d + normal.x * side * setback;
+          const cy = a.y + dir.y * d + normal.y * side * setback;
+          const points = orientedRect(cx, cy, angle, width, depth);
+          if (points.some(point => point.x < 20 || point.y < 20 || point.x > world.width - 20 || point.y > world.height - 20)) continue;
+          if (buildingOverlapsRoad(points)) continue;
+          if (map.buildings.some(building => rectsOverlap(getBounds(points), building.bounds))) continue;
+          map.buildings.push({
+            points,
+            label: '',
+            business: false,
+            color: rand(seed + 9) > 0.82 ? '#b9a06d' : '#8d7964',
+            bounds: getBounds(points)
+          });
+          made += 1;
+        }
+      }
+    }
+  }
+}
+
+function orientedRect(cx, cy, angle, width, depth) {
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const nx = -dy;
+  const ny = dx;
+  const hw = width / 2;
+  const hd = depth / 2;
+  return [
+    { x: cx - dx * hw - nx * hd, y: cy - dy * hw - ny * hd },
+    { x: cx + dx * hw - nx * hd, y: cy + dy * hw - ny * hd },
+    { x: cx + dx * hw + nx * hd, y: cy + dy * hw + ny * hd },
+    { x: cx - dx * hw + nx * hd, y: cy - dy * hw + ny * hd }
+  ];
+}
+
+function rectsOverlap(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
 function getBounds(points) {
@@ -735,13 +798,12 @@ function drawMap() {
     drawBuilding(building);
   }
 
-  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, 'rgba(224, 219, 196, .22)', 2, false);
+  for (const road of map.roads.filter(item => item.foot)) drawPolyline(road.points, 'rgba(224, 219, 196, .18)', 2, false);
 
-  for (const road of map.roads.filter(item => !item.foot)) {
-    drawPolyline(road.points, '#d8d1b8', road.width + 18, false);
-    drawPolyline(road.points, '#222b37', road.width, false);
-    drawLaneMarkings(road);
-  }
+  const driveableRoads = map.roads.filter(item => !item.foot);
+  for (const road of driveableRoads) drawPolyline(road.points, '#d8d1b8', road.width + 10, false);
+  for (const road of driveableRoads) drawPolyline(road.points, '#222b37', road.width, false);
+  for (const road of driveableRoads) drawLaneMarkings(road);
   drawLabels();
 }
 
